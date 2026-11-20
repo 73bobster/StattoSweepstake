@@ -1,0 +1,7 @@
+name = "stattosweepstake"
+compatibility_date = "2026-11-01"
+pages_build_output_dir = "public"
+
+[vars]
+NEON_JWKS_URL = "https://ep-odd-bar-za0gcueb.neonauth.c-2.eu-west-2.aws.neon.tech/neondb/auth/.well-known/jwks.json"
+# Secrets (set in Cloudflare Pages > Settings > Variables and Secrets, never committed): DATABASE_URL, API_FOOTBALL_KEY
