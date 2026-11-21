@@ -87,6 +87,8 @@ async function createNeonApi(cfg) {
       return r ? { id: r.id, name: r.name, fixture: r.fixture, status: r.status, memberCount: Number(r.member_count) } : null;
     },
     join: async (code, name) => must(await client.rpc('join_sweepstake', { p_code: code, p_display_name: name })),
+    claimable: async (code) => (must(await client.rpc('claimable_members', { p_code: code })) || []).map((r) => ({ id: r.id, name: r.name, pickCount: Number(r.pick_count) })),
+    claim: async (code, memberId) => must(await client.rpc('claim_member', { p_code: code, p_member: memberId })),
     async listMine() {
       // RLS lets us see every member of our games, so only keep OUR membership rows - otherwise a game shows once per player in it.
       const me = (await api.auth.getUser())?.id;
@@ -253,6 +255,15 @@ function createDemoApi() {
       write(d);
     },
     async preview(c) { const d = db(); const s = d.sweeps.find((x) => x.code === c.toUpperCase()); return s ? { id: s.id, name: s.name, fixture: s.fixture, status: s.status, memberCount: d.members.filter((m) => m.sweepId === s.id).length } : null; },
+    async claimable(c) { const d = db(); const s = d.sweeps.find((x) => x.code === c.toUpperCase()); return s ? d.members.filter((m) => m.sweepId === s.id && m.kind === 'local').map((m) => ({ id: m.id, name: m.name, pickCount: d.picks.filter((p) => p.memberId === m.id).length })) : []; },
+    async claim(c, memberId) {
+      const u = sessionUser(); const d = db(); const s = d.sweeps.find((x) => x.code === c.toUpperCase());
+      if (!s) throw new Error('Invite code not found');
+      if (d.members.some((m) => m.sweepId === s.id && m.userId === u.id)) return s.id;
+      const m = d.members.find((x) => x.id === memberId && x.sweepId === s.id && x.kind === 'local');
+      if (!m) throw new Error('That spot has already been taken');
+      m.userId = u.id; m.kind = 'user'; write(d); return s.id;
+    },
     async join(c, name) {
       const u = sessionUser(); const d = db(); const s = d.sweeps.find((x) => x.code === c.toUpperCase());
       if (!s) throw new Error('Invite code not found');
