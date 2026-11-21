@@ -105,8 +105,6 @@ function footballDataSection() {
   return `<div class="sec">Football data</div>
     <div class="card flat"><div class="small muted">Loads clubs, players and season stats into the shared football database (one-off; carries on where it stopped if interrupted).</div>
       <div class="small" id="ffmsg" style="margin-top:6px">${esc(f.err ? 'Stopped: ' + f.err : f.msg || '')}</div>
-      <div class="small" id="apimsg" style="margin-top:6px">${esc(S.apiMsg || '')}</div>
-      <button class="soft sm" data-act="apistatus" style="margin-top:6px">Check API key</button>
       ${f.running ? '' : `<button class="soft block" data-act="loadfootball" style="margin-top:8px">${f.done ? 'Check for more' : 'Load football data'}</button>`}</div>`;
 }
 async function runFootballLoad() {
@@ -755,7 +753,6 @@ document.addEventListener('click', async (ev) => {
     case 'theme': localStorage.setItem('statto_theme', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
     case 'accent': localStorage.setItem('statto_accent', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
     case 'loadfootball': runFootballLoad(); return;
-    case 'apistatus': { S.apiMsg = 'Checking…'; refreshSettings(); try { const r = await S.api.apiStatus(); S.apiMsg = r.errors && Object.keys(r.errors).length ? 'API says: ' + JSON.stringify(r.errors) : `Plan ${r.plan ?? '?'} (${r.active ? 'active' : 'not active'}) · used today ${r.used ?? '?'} of ${r.limitDay ?? '?'} · key ends ${r.keyTail}`; } catch (e) { S.apiMsg = e.message; } return refreshSettings(); }
     case 'favkind': S.favKind = d.k; return refreshSettings();
     case 'favadd': { const x = S.favRes?.[Number(d.i)]; if (!x) return; const P = S.prefs ||= { leagues: [], teams: [] }; const k = S.favKind === 'league' ? 'leagues' : 'teams';
       if (!P[k].some((y) => y.id === x.id)) P[k] = [...P[k], { id: x.id, name: x.name, logo: x.logo || '' }]; return saveFavs(); }
