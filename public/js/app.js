@@ -191,7 +191,7 @@ function settingsModal() {
     <div class="small muted" style="margin-top:10px">App colour</div><div class="chips" style="flex-wrap:wrap">${ACCENTS.map(([n, a, b]) => `<div class="swatch ${ac === n ? 'on' : ''}" title="${n}" data-act="accent" data-k="${n}" style="background:linear-gradient(135deg,${a} 50%,${b} 50%)"></div>`).join('')}</div>
     ${S.api.mode === 'neon' ? squadsSection() : ''}
     ${!u.guest ? favSection() : ''}
-    ${S.api.mode === 'neon' && !u.guest ? footballDataSection() : ''}
+    ${S.api.mode === 'neon' && !u.guest && S.admin ? footballDataSection() : ''}
     <div class="sec">Account</div>
     <div class="card flat"><div class="kv"><span>Signed in as</span><b>${esc(u.name || '—')}</b></div><div class="kv"><span>Email</span><b>${u.guest ? 'Guest (no email)' : esc(u.email || '')}</b></div></div>
     ${u.guest ? `<p class="small muted">You're playing as a guest on this device. Create an account from the sign-in page to keep your games on every device.</p>` : ''}
@@ -854,7 +854,9 @@ function closeModal() { document.querySelector('.modal-back')?.remove(); }
   applyLook(); matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', applyLook);
   S.api = await createApi(window.STATTO_CONFIG || {});
   S.user = await S.api.auth.getUser();
-  S.api.auth.onChange((u) => { const had = !!S.user; S.user = u; if (!!u !== had) route(); });
+  const checkAdmin = async () => { S.admin = false; if (S.user && !S.user.guest && S.api.mode === 'neon') { try { S.admin = await S.api.whoami(); } catch { /* not admin */ } } };
+  S.api.auth.onChange(async (u) => { const had = !!S.user; S.user = u; await checkAdmin(); if (!!u !== had) route(); });
   window.addEventListener('hashchange', route);
+  await checkAdmin();
   route();
 })();

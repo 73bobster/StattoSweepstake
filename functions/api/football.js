@@ -73,7 +73,8 @@ export async function onRequestPost({ request, env }) {
   try {
     if (!env.DATABASE_URL || !env.API_FOOTBALL_KEY || !env.NEON_JWKS_URL) return json({ error: 'Server is not configured yet (missing secrets)' }, 503);
     const token = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
-    try { await verifyJwt(token, env.NEON_JWKS_URL); } catch { return json({ error: 'Please sign in again' }, 401); }
+    let claims; try { claims = await verifyJwt(token, env.NEON_JWKS_URL); } catch { return json({ error: 'Please sign in again' }, 401); }
+    const isAdmin = String(env.ADMIN_USER_IDS || '').split(',').map((x) => x.trim()).filter(Boolean).includes(claims.sub); // the owner only: set in wrangler.toml
 
     const sql = makeSql(env.DATABASE_URL);
     const body = await request.json().catch(() => ({}));
@@ -245,7 +246,9 @@ export async function onRequestPost({ request, env }) {
       return json({ state: r.data, fetchedAt: r.fetchedAt });
     }
 
-    if (action === 'ffPlan' || action === 'ffStep') { // football-data loader (see functions/_lib/footballdata.js); switch off with LOADER_ENABLED once loaded
+    if (action === 'whoami') return json({ admin: isAdmin });
+    if (action === 'ffPlan' || action === 'ffStep') {
+      if (!isAdmin) return json({ error: 'Admin only' }, 403); // football-data loader (see functions/_lib/footballdata.js); switch off with LOADER_ENABLED once loaded
       if (env.LOADER_ENABLED !== 'true') return json({ error: 'Football data loader is switched off' }, 403);
       if (!env.FOOTBALL_DATABASE_URL) return json({ error: 'FOOTBALL_DATABASE_URL secret is not set yet' }, 503);
       const ctx = { fsql: makeSql(env.FOOTBALL_DATABASE_URL), api: (p) => call(p), apiRaw: (p) => call(p, true), limit: dailyLimit,
