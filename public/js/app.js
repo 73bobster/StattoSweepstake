@@ -406,7 +406,7 @@ const V = { tab: 'board', open: new Set(), edit: null, pool: null, seen: null };
 
 async function viewSweep(id) {
   $app.innerHTML = shell('<div class="spinner"></div>', { title: 'Sweepstake' });
-  V.id = id; V.edit = null; V.pool = null; V.seen = null;
+  V.id = id; V.edit = null; V.cfgEdit = null; V.pool = null; V.seen = null;
   await refreshSweep();
   V.state = await S.api.getState(V.data.sweep.fixtureId).catch(() => null);
   V.seen = V.state?.events?.length ?? 0;
@@ -512,6 +512,24 @@ function summaryText(dc) {
   return `${c.pick === 'draft' ? 'Snake draft, taking turns.' : 'Random deal.'} ${many}. <span class="muted">${LINEUP_TXT[c.lineup]}.</span>`;
 }
 
+/** Host-only editor for the draw rules, shown in the lobby before (re)dealing. */
+function cfgPanel(dc) {
+  const e = V.cfgEdit;
+  const tabs = (o, opts) => `<div class="tabs">${opts.map(([k, l]) => `<button class="${e[o] === k ? 'on' : ''}" data-act="cfgopt" data-o="${o}" data-k="${k}">${l}</button>`).join('')}</div>`;
+  const step = (k, v) => `<div class="stepper"><button class="soft sm" data-act="cfgstep" data-k="${k}" data-d="-1">−</button><span class="v">${v}</span><button class="soft sm" data-act="cfgstep" data-k="${k}" data-d="1">＋</button></div>`;
+  return `<div class="card stack" style="margin-top:12px">
+    <b>Change the rules</b>
+    <div><div class="small muted" style="margin-bottom:6px">Getting players</div>${tabs('pick', [['random', '🎲 Random deal'], ['draft', '🧢 Draft (take turns)']])}</div>
+    <div><div class="small muted" style="margin-bottom:6px">How many players</div>${tabs('limit', [['limited', 'A few each'], ['all', 'Whole squads']])}</div>
+    ${e.limit === 'limited' ? `
+    <div class="row between"><b>Starters each</b>${step('starters', e.starters)}</div>
+    <div class="row between"><b>Subs each</b>${step('subs', e.subs)}</div>
+    ${e.pick === 'random' ? `<div class="row between"><b>Include goalkeepers</b><input type="checkbox" class="toggle" data-act="cfggk" ${e.includeGK ? 'checked' : ''}></div>` : ''}` : ''}
+    <div><div class="small muted" style="margin-bottom:6px">Which players</div>${tabs('lineup', [['squad', 'Full squads'], ['xi', 'Starting XI']])}</div>
+    <div class="row"><button class="grow" data-act="cfgsave">Save rules</button><button class="ghost" data-act="cfgcancel">Cancel</button></div>
+  </div>`;
+}
+
 function lobby(sweep, members, isHost, st) {
   const link = inviteLink(sweep.code);
   const dc = cfgOf(sweep.drawConfig);
@@ -531,7 +549,7 @@ function lobby(sweep, members, isHost, st) {
       ${isHost && dc.mode === 'onephone' ? (V.namesEdit ? `<div class="stack" style="margin-top:8px"><textarea id="lnames">${esc(V.namesText ?? locals.map((m) => m.name).join('\n'))}</textarea><div class="row"><button class="grow" data-act="savenames">Save names</button><button class="ghost" data-act="cancelnames">Cancel</button></div></div>` : `<div style="margin-top:8px"><button class="soft sm" data-act="editnames">✏️ Change mates’ names</button></div>`) : ''}
       ${isHost && dc.mode === 'cpu' ? `<div class="row between" style="margin-top:8px"><span class="small muted">Computer rivals</span>${stepper('lcpu', cpus.length)}</div>` : ''}
     </div>
-    <div class="card" style="margin-top:12px"><div class="small muted">${summaryText(sweep.drawConfig)}</div></div>
+    ${isHost && V.cfgEdit ? cfgPanel(dc) : `<div class="card" style="margin-top:12px"><div class="small muted">${summaryText(sweep.drawConfig)}</div>${isHost ? `<button class="soft sm" style="margin-top:8px" data-act="cfgedit">Change rules</button>` : ''}</div>`}
     ${V.pool ? `<div class="banner ${V.pool.source === 'lineups' ? 'info' : ''}" style="margin-top:8px;padding:8px 10px;font-size:13px">${V.pool.source === 'lineups' ? '✅ Confirmed line-ups' : dc.lineup === 'squad' ? 'Full squads' : '⚠️ Line-ups not out yet - using full squads; redraw once they land'}${V.pool.source === 'lineups' ? '' : V.pool.excluded?.length ? ` · ${V.pool.excluded.length} injured left out` : V.pool.injuriesError ? ' · injury check failed' : ' · no injuries listed'}</div>` : ''}
     ${V.poolErr ? `<div class="banner err" style="margin-top:12px">${esc(V.poolErr)}${isHost && dc.lineup === 'xi' ? `<div style="margin-top:8px"><button class="soft sm" data-act="usesquads">Use full squads instead</button></div>` : ''}</div>` : ''}
     ${!feas.ok ? `<div class="banner err" style="margin-top:12px">${esc(feas.message)}</div>` : ''}
@@ -790,6 +808,14 @@ document.addEventListener('click', async (ev) => {
     case 'editnames': V.namesEdit = true; V.namesText = undefined; return renderSweep();
     case 'cancelnames': V.namesEdit = false; V.namesText = undefined; return renderSweep();
     case 'savenames': { const names = parseNames(document.getElementById('lnames').value); if (!names.length) return toast('Add at least one name'); await S.api.setMembers(V.id, names.map((n) => ({ name: n, kind: 'local' }))); V.namesEdit = false; V.namesText = undefined; await refreshSweep(); return renderSweep(); }
+    case 'cfgedit': { const c = cfgOf(V.data.sweep.drawConfig); V.cfgEdit = { pick: c.pick, limit: c.limit, lineup: c.lineup === 'xi' ? 'xi' : 'squad', starters: c.starters, subs: c.subs, includeGK: !!c.includeGK }; return renderSweep(); }
+    case 'cfgcancel': V.cfgEdit = null; return renderSweep();
+    case 'cfgopt': V.cfgEdit[d.o] = d.k; return renderSweep();
+    case 'cfgstep': { const lim = { starters: [1, 8], subs: [0, 3] }[d.k]; V.cfgEdit[d.k] = Math.max(lim[0], Math.min(lim[1], V.cfgEdit[d.k] + Number(d.d))); return renderSweep(); }
+    case 'cfgsave': {
+      const sw = V.data.sweep, e = V.cfgEdit; const dc = { ...cfgOf(sw.drawConfig), ...e }; delete dc.order; delete dc.each;
+      const rules = clone(sw.rules); setAppearance(rules, e.lineup === 'squad');
+      try { await S.api.updateSetup(V.id, dc, rules); V.cfgEdit = null; V.poolErr = ''; V.pool = null; await refreshSweep(); toast('Rules updated'); renderSweep(); } catch (err) { toast(err.message); } return; }
     case 'usesquads': { const sw = V.data.sweep; const dc = { ...cfgOf(sw.drawConfig), lineup: 'squad' }; const rules = clone(sw.rules); setAppearance(rules, true); await S.api.updateSetup(V.id, dc, rules); V.poolErr = ''; await refreshSweep(); return renderSweep(); }
     case 'refresh': await pollState(true); return renderSweep();
     case 'demokick': await S.api.startDemoMatch(); await pollState(); return;
@@ -803,6 +829,7 @@ document.addEventListener('click', async (ev) => {
 });
 document.addEventListener('change', (ev) => {
   const el = ev.target.closest('[data-act]'); if (!el) return; const d = el.dataset;
+  if (d.act === 'cfggk') { V.cfgEdit.includeGK = el.checked; return renderSweep(); }
   if (d.act === 'gk') { N.gk = el.checked; captureNew(); renderNew(); }
   if (d.act === 'ruleon') { const t = d.s === 'n' ? N.rules : V.edit.rules; t[d.k].on = el.checked; d.s === 'n' ? renderNew() : renderSweep(); }
   if (d.act === 'awardon') { const t = d.s === 'n' ? N.awards : V.edit.awards; t[d.k].on = el.checked; d.s === 'n' ? renderNew() : renderSweep(); }
