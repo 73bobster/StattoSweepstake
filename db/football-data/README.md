@@ -1,7 +1,7 @@
 # Football data database (shared across our sports apps)
 
 Neon project **football-data** (`winter-wave-38503340`, eu-west-2, database `neondb`, schema `ref`).
-Created 2026-11-21. Schema source: `db/migrations/004_reference_data.sql` (the same DDL is also commented in the database itself: `\d+ ref.*` or `select obj_description(...)`).
+Created 2026-11-21. Schema source: `db/football-data/001_schema.sql` (the same DDL is also commented in the database itself: `\d+ ref.*` or `select obj_description(...)`).
 
 ## Who uses it
 | App | Uses |

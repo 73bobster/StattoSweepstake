@@ -1,3 +1,4 @@
+-- TARGET DATABASE: Neon project football-data (winter-wave-38503340), NOT the Sweepstake database.
 -- Shared football reference data, used by Statto Sweepstake, the quiz, MatchStatto and the future Football Draft.
 -- Lives in its own schema (ref). Server-side only: RLS on, no client policies; apps read it through their own API functions.
 -- Principle: our own ids everywhere; provider ids (API-Football, Sportmonks, Wikidata...) live in ref.external_ids.
