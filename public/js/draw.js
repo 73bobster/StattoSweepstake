@@ -143,26 +143,36 @@ export function runDraw({ pool, memberIds, config, rng = Math.random, attempts =
 export function dealAll({ pool, memberIds, rng = Math.random, includeGK = true }) {
   const k = memberIds.length;
   if (!k) throw new Error('Nobody to deal to.');
-  let players = pool.players.filter((p) => includeGK || p.role !== 'GK');
-  if (players.length < k) throw new Error('Not enough players for that many people.');
-  players = shuffle(players, rng);
-  players = players.slice(0, Math.floor(players.length / k) * k); // drop the random remainder
-  const groups = new Map();
-  for (const p of players) {
-    const key = `${p.role}-${p.side}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(p);
-  }
-  const order = shuffle(memberIds, rng);
-  let ptr = 0;
+  const all = pool.players.filter((p) => includeGK || p.role !== 'GK');
+  if (all.length < k) throw new Error('Not enough players for that many people.');
+  // Starters and substitutes are dealt separately so everybody gets the same number of each; the odd leftovers are dropped at random.
+  const evenOut = (list) => shuffle(list, rng).slice(0, Math.floor(list.length / k) * k);
+  const starters = evenOut(all.filter((p) => p.bench !== true));
+  const subs = evenOut(all.filter((p) => p.bench === true));
+  const stat = new Map(memberIds.map((m) => [m, { total: 0, role: {}, side: {} }]));
   const picks = [];
-  for (const list of shuffle([...groups.values()], rng)) {
-    for (const p of list) {
-      picks.push({ memberId: order[ptr % k], playerId: p.id, slot: p.bench === true ? 'sub' : 'starter', role: p.role, side: p.side });
-      ptr++;
+  // Hand each player to whoever has the fewest of that position, then the fewest from that side, then the fewest overall.
+  const give = (p, slot) => {
+    const cap = (slot === 'starter' ? starters : subs).length / k;
+    const own = (m) => picks.filter((x) => x.memberId === m && x.slot === slot).length;
+    const open = memberIds.filter((m) => own(m) < cap);
+    const key = (m) => { const t = stat.get(m); return [t.role[`${slot}-${p.role}`] || 0, t.side[`${slot}-${p.side}`] || 0, t.total]; };
+    let best = [], bk = null;
+    for (const m of shuffle(open, rng)) {
+      const kk = key(m);
+      if (!bk || kk[0] < bk[0] || (kk[0] === bk[0] && (kk[1] < bk[1] || (kk[1] === bk[1] && kk[2] < bk[2])))) { bk = kk; best = [m]; }
+      else if (kk[0] === bk[0] && kk[1] === bk[1] && kk[2] === bk[2]) best.push(m);
     }
-  }
-  return { picks, summary: { each: players.length / k, leftOut: pool.players.filter((p) => includeGK || p.role !== 'GK').length - players.length } };
+    const m = best[0];
+    const t = stat.get(m);
+    t.total++; t.role[`${slot}-${p.role}`] = (t.role[`${slot}-${p.role}`] || 0) + 1; t.side[`${slot}-${p.side}`] = (t.side[`${slot}-${p.side}`] || 0) + 1;
+    picks.push({ memberId: m, playerId: p.id, slot, role: p.role, side: p.side });
+  };
+  // scarce positions first (goalkeepers, then attackers...) so the small groups are shared out fairly
+  const byRole = (list) => { const c = {}; list.forEach((p) => (c[p.role] = (c[p.role] || 0) + 1)); return [...list].sort((x, y) => c[x.role] - c[y.role]); };
+  byRole(starters).forEach((p) => give(p, 'starter'));
+  byRole(subs).forEach((p) => give(p, 'sub'));
+  return { picks, summary: { each: (starters.length + subs.length) / k, leftOut: all.length - starters.length - subs.length } };
 }
 
 // ---------------------------------------------------------------------------
