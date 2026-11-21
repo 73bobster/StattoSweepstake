@@ -14,6 +14,10 @@ const API = 'https://v3.football.api-sports.io';
 const DAILY_BUDGET = 95; // stop before the 100/day free limit
 const SEED_BUDGET = 70; // squad seeding never uses the last ~25 calls of the day - those are for fixtures and live matches
 // Leagues whose squads we keep in our own database: Premier League, Championship, Scottish Premiership, Scottish Championship
+// API-Football sometimes returns HTML-escaped text (O&apos;Donnell); store and show it as plain text.
+const ENT = { '&apos;': "'", '&#39;': "'", '&#x27;': "'", '&quot;': '"', '&amp;': '&' };
+const unescapeDeep = (v) => typeof v === 'string' ? v.replace(/&(apos|#39|#x27|quot|amp);/g, (m) => ENT[m]) : Array.isArray(v) ? v.map(unescapeDeep) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unescapeDeep(x)])) : v;
+
 const LEAGUES = { 39: { name: 'Premier League', teams: 20 }, 40: { name: 'Championship', teams: 24 }, 179: { name: 'Scottish Premiership', teams: 12 }, 180: { name: 'Scottish Championship', teams: 10 } };
 const SQUAD_MAX_AGE_DAYS = 30;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -82,7 +86,8 @@ export async function onRequestPost({ request, env }) {
       const j = await r.json();
       const errs = j.errors && (Array.isArray(j.errors) ? j.errors : Object.values(j.errors));
       if (errs && errs.length) throw new Error(String(errs[0]));
-      return raw ? { response: j.response, paging: j.paging } : j.response;
+      const response = unescapeDeep(j.response);
+      return raw ? { response, paging: j.paging } : response;
     }
 
     async function cached(key, ttlSec, load, force = false) {

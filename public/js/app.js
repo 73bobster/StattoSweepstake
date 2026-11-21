@@ -5,7 +5,7 @@ import { computeScores, DEFAULT_RULES, DEFAULT_AWARDS, APPEARANCE_KEYS, isFinish
 const $app = document.getElementById('app');
 const S = { api: null, user: null, route: null, busy: false, error: '', toastTimer: null, poll: null, unsub: null };
 const clone = (o) => JSON.parse(JSON.stringify(o));
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const esc = (s) => String(s ?? '').replace(/&(apos|#39|#x27|quot);/g, (m) => (m === '&quot;' ? '"' : "'")).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const initials = (n) => (n || '?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 const FEATURED = [39, 40, 179, 180, 2, 3, 848, 140, 135, 78, 61, 88, 94, 1, 4, 5, 9, 45, 48, 143, 181, 253];
 
