@@ -3,6 +3,8 @@
 //    and the /api/football Cloudflare Pages Function for API-Football (the key never reaches the browser)
 //  - Demo (no setup): localStorage + a scripted fake match, so the whole flow can be tried instantly
 
+import { draftTurn } from './draw.js';
+
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now());
 const GUEST_DOMAIN = '@guest.statto.app';
 
@@ -22,8 +24,8 @@ async function createNeonApi(cfg) {
   const notify = async () => { const u = await api.auth.getUser(); listeners.forEach((f) => f(u)); return u; };
 
   const mapPick = (p) => ({ id: p.id, memberId: p.member_id, playerId: p.player_id, playerName: p.player_name, number: p.number, photo: p.photo, side: p.side, teamId: p.team_id, role: p.role, slot: p.slot });
-  const mapMember = (m) => ({ id: m.id, userId: m.user_id, name: m.display_name, isHost: m.is_host });
-  const mapSweep = (s) => ({ id: s.id, code: s.code, name: s.name, creatorId: s.creator_id, fixtureId: s.fixture_id, fixture: s.fixture, rules: s.rules, awards: s.awards, drawConfig: s.draw_config, status: s.status });
+  const mapMember = (m) => ({ id: m.id, userId: m.user_id, name: m.display_name, isHost: m.is_host, kind: m.kind || 'user' });
+  const mapSweep = (s) => ({ id: s.id, code: s.code, name: s.name, creatorId: s.creator_id, fixtureId: s.fixture_id, fixture: s.fixture, rules: s.rules, awards: s.awards, drawConfig: s.draw_config, status: s.status, pool: s.pool || null });
 
   async function fn(body) {
     const { data } = await auth.getSession();
@@ -62,11 +64,15 @@ async function createNeonApi(cfg) {
       onChange(cb) { listeners.push(cb); },
     },
     listFixtures: async (date) => (await fn({ action: 'fixtures', date })).fixtures,
-    getPool: (fx, force) => fn({ action: 'pool', fixtureId: fx.id, homeId: fx.teams.home.id, awayId: fx.teams.away.id, force }),
+    getPool: (fx, force, squadOnly) => fn({ action: 'pool', fixtureId: fx.id, homeId: fx.teams.home.id, awayId: fx.teams.away.id, force, squadOnly: !!squadOnly }),
     getState: async (fixtureId, force) => (await fn({ action: 'state', fixtureId, force })).state,
-    async createSweepstake({ name, displayName, fixture, rules, awards, drawConfig }) {
-      return mapSweep(must(await client.rpc('create_sweepstake', { p_name: name, p_display_name: displayName, p_fixture_id: fixture.id, p_fixture: fixture, p_rules: rules, p_awards: awards, p_draw_config: drawConfig })));
+    async createSweepstake({ name, displayName, fixture, rules, awards, drawConfig, members = [] }) {
+      return mapSweep(must(await client.rpc('create_sweepstake', { p_name: name, p_display_name: displayName, p_fixture_id: fixture.id, p_fixture: fixture, p_rules: rules, p_awards: awards, p_draw_config: drawConfig, p_members: members })));
     },
+    updateSetup: async (id, drawConfig, rules) => must(await client.rpc('update_setup', { p_sweepstake: id, p_draw_config: drawConfig, p_rules: rules })),
+    setMembers: async (id, members) => must(await client.rpc('set_virtual_members', { p_sweepstake: id, p_members: members })),
+    startDraft: async (id, order, pool, each) => must(await client.rpc('start_draft', { p_sweepstake: id, p_order: order, p_pool: pool, p_each: each })),
+    draftPick: async (id, memberId, playerId) => must(await client.rpc('draft_pick', { p_sweepstake: id, p_member: memberId, p_player: playerId })),
     async preview(code) {
       const r = must(await client.rpc('preview_sweepstake', { p_code: code }))?.[0];
       return r ? { id: r.id, name: r.name, fixture: r.fixture, status: r.status, memberCount: Number(r.member_count) } : null;
@@ -190,15 +196,38 @@ function createDemoApi() {
       const { events, lineups, ...row } = demoState(db().matchStart);
       return [row];
     },
-    async getPool() { return { source: 'lineups', players: demoPlayers() }; },
+    async getPool(fx, force, squadOnly) { return squadOnly ? { source: 'squads', players: demoPlayers().map((p) => ({ ...p, bench: null })) } : { source: 'lineups', players: demoPlayers() }; },
     async getState() { return demoState(db().matchStart); },
     async startDemoMatch() { const d = db(); d.matchStart = Date.now(); write(d); },
-    async createSweepstake({ name, displayName, fixture, rules, awards, drawConfig }) {
+    async createSweepstake({ name, displayName, fixture, rules, awards, drawConfig, members = [] }) {
       const u = sessionUser(); const d = db();
-      const s = { id: uid(), code: code(), name, creatorId: u.id, fixtureId: fixture.id, fixture, rules, awards, drawConfig, status: 'setup' };
+      const s = { id: uid(), code: code(), name, creatorId: u.id, fixtureId: fixture.id, fixture, rules, awards, drawConfig, status: 'setup', pool: null };
       d.sweeps.push(s);
-      d.members.push({ id: uid(), sweepId: s.id, userId: u.id, name: displayName, isHost: true });
+      d.members.push({ id: uid(), sweepId: s.id, userId: u.id, name: displayName, isHost: true, kind: 'user' });
+      members.filter((m) => (m.name || '').trim()).forEach((m) => d.members.push({ id: uid(), sweepId: s.id, userId: 'v:' + uid(), name: m.name.trim().slice(0, 30), isHost: false, kind: m.kind === 'cpu' ? 'cpu' : 'local' }));
       write(d); return s;
+    },
+    async updateSetup(id, drawConfig, rules) { const d = db(); const s = d.sweeps.find((x) => x.id === id); s.drawConfig = drawConfig; s.rules = rules; write(d); },
+    async setMembers(id, members) {
+      const d = db(); d.members = d.members.filter((m) => !(m.sweepId === id && m.kind && m.kind !== 'user'));
+      members.filter((m) => (m.name || '').trim()).forEach((m) => d.members.push({ id: uid(), sweepId: id, userId: 'v:' + uid(), name: m.name.trim().slice(0, 30), isHost: false, kind: m.kind === 'cpu' ? 'cpu' : 'local' }));
+      write(d);
+    },
+    async startDraft(id, order, pool, each) {
+      const d = db(); const s = d.sweeps.find((x) => x.id === id);
+      d.picks = d.picks.filter((p) => p.sweepId !== id);
+      s.status = 'drafting'; s.pool = pool; s.drawConfig = { ...s.drawConfig, order, each }; write(d);
+    },
+    async draftPick(id, memberId, playerId) {
+      const d = db(); const s = d.sweeps.find((x) => x.id === id);
+      if (s.status !== 'drafting') throw new Error('The draft is not running');
+      const n = d.picks.filter((p) => p.sweepId === id).length;
+      if (draftTurn(s.drawConfig.order, n) !== memberId) throw new Error('It is not their turn');
+      const pl = s.pool.find((p) => p.id === playerId);
+      if (!pl || d.picks.some((p) => p.sweepId === id && p.playerId === playerId)) throw new Error('Already picked');
+      d.picks.push({ id: uid(), sweepId: id, memberId, playerId, playerName: pl.name, number: pl.number ?? null, photo: pl.photo || null, side: pl.side, teamId: pl.teamId ?? null, role: pl.role, slot: pl.bench === true ? 'sub' : 'starter' });
+      if (n + 1 >= s.drawConfig.order.length * s.drawConfig.each) s.status = 'drawn';
+      write(d);
     },
     async preview(c) { const d = db(); const s = d.sweeps.find((x) => x.code === c.toUpperCase()); return s ? { id: s.id, name: s.name, fixture: s.fixture, status: s.status, memberCount: d.members.filter((m) => m.sweepId === s.id).length } : null; },
     async join(c, name) {
@@ -206,7 +235,7 @@ function createDemoApi() {
       if (!s) throw new Error('Invite code not found');
       if (d.members.some((m) => m.sweepId === s.id && m.userId === u.id)) return s.id;
       if (s.status !== 'setup') throw new Error('The draw has already happened - ask the host to reopen it');
-      d.members.push({ id: uid(), sweepId: s.id, userId: u.id, name, isHost: false });
+      d.members.push({ id: uid(), sweepId: s.id, userId: u.id, name, isHost: false, kind: 'user' });
       write(d); return s.id;
     },
     async listMine() { const u = sessionUser(); const d = db(); return d.members.filter((m) => m.userId === u.id).map((m) => ({ ...d.sweeps.find((s) => s.id === m.sweepId), isHost: m.isHost })).filter((s) => s.id); },
@@ -215,7 +244,7 @@ function createDemoApi() {
       const d = db(); d.picks = d.picks.filter((p) => p.sweepId !== id).concat(picks.map((p) => ({ ...p, id: uid(), sweepId: id })));
       d.sweeps.find((s) => s.id === id).status = 'drawn'; write(d);
     },
-    async reopen(id) { const d = db(); d.picks = d.picks.filter((p) => p.sweepId !== id); d.sweeps.find((s) => s.id === id).status = 'setup'; write(d); },
+    async reopen(id) { const d = db(); d.picks = d.picks.filter((p) => p.sweepId !== id); const s = d.sweeps.find((x) => x.id === id); s.status = 'setup'; s.pool = null; write(d); },
     async updateRules(id, rules, awards) { const d = db(); const s = d.sweeps.find((x) => x.id === id); s.rules = rules; s.awards = awards; write(d); },
     subscribe(sweepId, fixtureId, onChange) {
       const h = () => onChange('sweep');

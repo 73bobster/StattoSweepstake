@@ -135,3 +135,61 @@ export function runDraw({ pool, memberIds, config, rng = Math.random, attempts =
   }
   return { picks: best.picks, summary: { imbalance: best.score } };
 }
+
+// ---------------------------------------------------------------------------
+// Whole-squad deal: every player goes to someone, as evenly as possible.
+// Leftovers (fewer than one per person) are left out at random so nobody gets an extra player.
+// Players are dealt group by group (role x side) round-robin, so each person's role and side mix stays even.
+export function dealAll({ pool, memberIds, rng = Math.random, includeGK = true }) {
+  const k = memberIds.length;
+  if (!k) throw new Error('Nobody to deal to.');
+  let players = pool.players.filter((p) => includeGK || p.role !== 'GK');
+  if (players.length < k) throw new Error('Not enough players for that many people.');
+  players = shuffle(players, rng);
+  players = players.slice(0, Math.floor(players.length / k) * k); // drop the random remainder
+  const groups = new Map();
+  for (const p of players) {
+    const key = `${p.role}-${p.side}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  const order = shuffle(memberIds, rng);
+  let ptr = 0;
+  const picks = [];
+  for (const list of shuffle([...groups.values()], rng)) {
+    for (const p of list) {
+      picks.push({ memberId: order[ptr % k], playerId: p.id, slot: p.bench === true ? 'sub' : 'starter', role: p.role, side: p.side });
+      ptr++;
+    }
+  }
+  return { picks, summary: { each: players.length / k, leftOut: pool.players.filter((p) => includeGK || p.role !== 'GK').length - players.length } };
+}
+
+// ---------------------------------------------------------------------------
+// Draft helpers (snake order: 1..k, then k..1, ...)
+export function draftTurn(order, pickCount) {
+  const k = order.length;
+  const round = Math.floor(pickCount / k);
+  let idx = pickCount % k;
+  if (round % 2 === 1) idx = k - 1 - idx;
+  return order[idx];
+}
+
+/** How many picks each person gets in a draft. */
+export function draftEach(poolSize, memberCount, config) {
+  const max = Math.floor(poolSize / memberCount);
+  if (config.limit === 'all') return max;
+  return Math.max(1, Math.min(max, (config.starters || 0) + (config.subs || 0)));
+}
+
+/** The computer's pick: random, but leaning towards players likely to score points (attackers, then midfielders). */
+export function cpuPick(available, rng = Math.random) {
+  const weight = { ATT: 3, MID: 2, DEF: 1, GK: 0.4 };
+  const total = available.reduce((t, p) => t + (weight[p.role] ?? 1), 0);
+  let r = rng() * total;
+  for (const p of available) { r -= weight[p.role] ?? 1; if (r <= 0) return p; }
+  return available[available.length - 1];
+}
+
+const CPU_NAMES = ['Gaffer Bot', 'Stat-O-Matic', 'Robo-Ref', 'Captain Algorithm', 'The Mighty Byte', 'Pixel Pundit', 'Bot Ronaldo', 'Cyber Cloughie'];
+export const cpuNames = (n) => CPU_NAMES.slice(0, n);

@@ -1,6 +1,6 @@
 import { createApi } from './api.js';
-import { runDraw, checkFeasible } from './draw.js';
-import { computeScores, DEFAULT_RULES, DEFAULT_AWARDS, isFinished, isLive, hasStarted } from './scoring.js';
+import { runDraw, checkFeasible, dealAll, draftTurn, draftEach, cpuPick, cpuNames } from './draw.js';
+import { computeScores, DEFAULT_RULES, DEFAULT_AWARDS, APPEARANCE_KEYS, isFinished, isLive, hasStarted } from './scoring.js';
 
 const $app = document.getElementById('app');
 const S = { api: null, user: null, route: null, busy: false, error: '', toastTimer: null, poll: null, unsub: null };
@@ -25,6 +25,17 @@ function toast(msg) {
 function inviteLink(code) { return `${location.origin}${location.pathname}#/join/${code}`; }
 const go = (h) => { if (location.hash === h) route(); else location.hash = h; };
 const fmtPts = (n) => (n > 0 ? '+' + n : String(n));
+
+const MODES = {
+  onephone: ['📱', 'One phone', 'You run it all and tell your mates the scores. They need nothing.'],
+  cpu: ['🤖', 'Vs the computer', 'You against virtual rivals dealt their own players.'],
+  friends: ['👥', 'Friends’ phones', 'Everyone joins with an invite link and watches live.'],
+};
+/** Settings of a sweepstake, with defaults for games made before modes existed. */
+const cfgOf = (dc = {}) => ({ mode: 'friends', pick: 'random', limit: 'limited', lineup: 'auto', starters: 3, subs: 1, includeGK: false, ...dc });
+const LINEUP_TXT = { squad: 'Full squads, deal any time', xi: 'Starting XI (about 1 hr before kick-off)', auto: 'Line-ups if out, else squads' };
+function setAppearance(rules, on) { APPEARANCE_KEYS.forEach((k) => { if (rules[k]) rules[k].on = on; }); }
+const parseNames = (t) => [...new Set(String(t || '').split(/[\n,]/).map((x) => x.trim().slice(0, 30)).filter(Boolean))].slice(0, 11);
 
 // ------------------------------------------------------------------ router
 async function route() {
@@ -154,7 +165,7 @@ async function viewHome() {
     <div class="sec">${mine.length ? 'Your sweepstakes' : ''}</div>
     <div class="stack">${mine.map((s) => `
       <div class="card" data-act="open" data-id="${s.id}" style="cursor:pointer">
-        <div class="row between"><b>${esc(s.name)}</b><span class="pill">${s.status === 'setup' ? 'Lobby' : 'Drawn'}</span></div>
+        <div class="row between"><b>${esc(s.name)}</b><span class="pill">${s.status === 'setup' ? 'Lobby' : s.status === 'drafting' ? 'Drafting' : 'Drawn'}</span></div>
         <div class="row muted small" style="margin-top:6px">${crest(s.fixture.teams.home)} ${esc(s.fixture.teams.home.name)} v ${crest(s.fixture.teams.away)} ${esc(s.fixture.teams.away.name)}</div>
         <div class="small muted" style="margin-top:4px">${dayStr(s.fixture.kickoff)} · ${timeStr(s.fixture.kickoff)}${s.isHost ? ' · you are the host' : ''}</div>
       </div>`).join('') || '<p class="muted center">Nothing yet. Start one and invite your mates.</p>'}</div>`, { title: 'My games', sub: 'Your sweepstakes' });
@@ -182,7 +193,10 @@ async function doJoin(code, name) {
 }
 
 // ------------------------------------------------------------------ new sweepstake
-const N = { date: ymd(new Date()), fixtures: null, q: '', all: false, sel: null, name: '', starters: 3, subs: 1, gk: false, rules: clone(DEFAULT_RULES), awards: clone(DEFAULT_AWARDS), dname: '' };
+// Defaults = the quickest set-up: one phone, random deal, full squads from both teams.
+const N = { date: ymd(new Date()), fixtures: null, q: '', all: false, sel: null, name: '', starters: 3, subs: 1, gk: false, rules: clone(DEFAULT_RULES), awards: clone(DEFAULT_AWARDS), dname: '',
+  mode: 'onephone', names: '', cpu: 2, pick: 'random', limit: 'limited', lineup: 'squad' };
+setAppearance(N.rules, true);
 
 async function viewNew() {
   N.dname ||= S.user.name || '';
@@ -221,17 +235,29 @@ function renderNew() {
       ${!q && !N.all && featuredCount && (N.fixtures.length > featuredCount) ? `<p class="center"><button class="ghost sm" data-act="showall">Show all ${N.fixtures.length} matches worldwide</button></p>` : ''}
       ${total > 120 ? `<p class="muted small center">Showing the first 120 of ${total} - search to narrow it down.</p>` : ''}`}
     ${sel ? `
-    <div class="sec">2 · Set it up</div>
-    <div class="card stack">
+    <div class="sec">2 · Who's playing?</div>
+    <div class="opts">${Object.entries(MODES).map(([k, [ic, t, d]]) => `<button class="opt ${N.mode === k ? 'on' : ''}" data-act="mode" data-k="${k}"><span class="ic">${ic}</span><span><b>${t}</b><span class="d">${d}</span></span></button>`).join('')}</div>
+    <div class="card stack" style="margin-top:10px">
       <div><label class="lbl">Sweepstake name</label><input type="text" id="sname" maxlength="40" placeholder="${esc(sel.teams.home.name)} v ${esc(sel.teams.away.name)}" value="${esc(N.name)}"></div>
       <div><label class="lbl">Your name</label><input type="text" id="dname" maxlength="30" value="${esc(N.dname)}"></div>
-      <div class="row between"><div><b>Starters each</b><div class="small muted">Spread across defence, midfield & attack</div></div>${stepper('starters', N.starters)}</div>
-      <div class="row between"><div><b>Subs each</b><div class="small muted">Random bench player</div></div>${stepper('subs', N.subs)}</div>
-      <div class="row between"><div><b>Include goalkeepers</b><div class="small muted">Adds a keeper to the role rotation</div></div><input type="checkbox" class="toggle" data-act="gk" ${N.gk ? 'checked' : ''}></div>
+      ${N.mode === 'onephone' ? `<div><label class="lbl">Your mates' names - one per line</label><textarea id="nnames" placeholder="Dave&#10;Sam&#10;Priya">${esc(N.names)}</textarea><div class="small muted" style="margin-top:4px">You score the game on this phone and pass the news on. Up to 10 mates.</div></div>` : ''}
+      ${N.mode === 'cpu' ? `<div class="row between"><div><b>Computer rivals</b><div class="small muted">${esc(cpuNames(N.cpu).join(', '))}</div></div>${stepper('cpu', N.cpu)}</div>` : ''}
+      ${N.mode === 'friends' ? `<div class="small muted">You'll get an invite link to send round. You deal the players once everyone is in.</div>` : ''}
     </div>
-    <div class="sec">3 · Scoring</div>
+    <div class="sec">3 · How it's played</div>
+    <div class="card stack">
+      <div><div class="small muted" style="margin-bottom:6px">Getting players</div><div class="tabs">${[['random', '🎲 Random deal'], ['draft', '🧢 Draft (take turns)']].map(([k, l]) => `<button class="${N.pick === k ? 'on' : ''}" data-act="opt" data-o="pick" data-k="${k}">${l}</button>`).join('')}</div></div>
+      <div><div class="small muted" style="margin-bottom:6px">How many players</div><div class="tabs">${[['limited', 'A few each'], ['all', 'Whole squads']].map(([k, l]) => `<button class="${N.limit === k ? 'on' : ''}" data-act="opt" data-o="limit" data-k="${k}">${l}</button>`).join('')}</div></div>
+      ${N.limit === 'limited' ? `
+      <div class="row between"><div><b>Starters each</b><div class="small muted">${N.pick === 'random' ? 'Spread across defence, midfield & attack' : 'Any players you like'}</div></div>${stepper('starters', N.starters)}</div>
+      <div class="row between"><div><b>Subs each</b><div class="small muted">${N.pick === 'random' ? 'Random bench player' : 'Counted in the picks above'}</div></div>${stepper('subs', N.subs)}</div>
+      ${N.pick === 'random' ? `<div class="row between"><div><b>Include goalkeepers</b><div class="small muted">Adds a keeper to the role rotation</div></div><input type="checkbox" class="toggle" data-act="gk" ${N.gk ? 'checked' : ''}></div>` : ''}` : `<div class="small muted">Every player in both squads is shared out evenly. A few at random sit out if they don't divide exactly.</div>`}
+      <div><div class="small muted" style="margin-bottom:6px">Which players</div><div class="tabs">${[['squad', 'Full squads'], ['xi', 'Starting XI']].map(([k, l]) => `<button class="${N.lineup === k ? 'on' : ''}" data-act="opt" data-o="lineup" data-k="${k}">${l}</button>`).join('')}</div>
+        <div class="small muted" style="margin-top:6px">${N.lineup === 'squad' ? 'Deal any time. Points for starting (+1) and coming on (+1), and a penalty for being subbed off (-1).' : 'Wait until the line-ups are announced (about an hour before kick-off), then only players in the matchday squad are dealt.'}</div></div>
+    </div>
+    <div class="sec">4 · Scoring</div>
     ${rulesEditor(N.rules, N.awards, 'n')}
-    <div class="sticky-cta"><button class="block" data-act="create" ${S.busy ? 'disabled' : ''}>Create & get invite link</button></div>` : ''}
+    <div class="sticky-cta"><button class="block" data-act="create" ${S.busy ? 'disabled' : ''}>${N.mode === 'friends' ? 'Create & get invite link' : N.pick === 'draft' ? 'Create & start the draft' : 'Create & deal the players'}</button></div>` : ''}
   `, { title: 'New sweepstake', sub: 'Pick a match, set the rules' });
   const q2 = document.getElementById('fxq'); if (q2 && S.focusQ) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); }
 }
@@ -256,11 +282,16 @@ async function createSweep() {
   const name = (document.getElementById('sname')?.value || '').trim() || `${sel.teams.home.name} v ${sel.teams.away.name}`;
   const dname = (document.getElementById('dname')?.value || '').trim();
   if (!dname) return toast('Add your name first');
+  captureNew();
+  const members = N.mode === 'onephone' ? parseNames(N.names).map((n) => ({ name: n, kind: 'local' })) : N.mode === 'cpu' ? cpuNames(N.cpu).map((n) => ({ name: n, kind: 'cpu' })) : [];
+  if (N.mode === 'onephone' && !members.length) return toast('Add at least one mate’s name');
   S.busy = true; renderNew();
   try {
     if (dname !== S.user.name) S.user = await S.api.auth.setName(dname);
-    const s = await S.api.createSweepstake({ name, displayName: dname, fixture: sel, rules: N.rules, awards: N.awards, drawConfig: { starters: N.starters, subs: N.subs, includeGK: N.gk } });
+    const drawConfig = { mode: N.mode, pick: N.pick, limit: N.limit, lineup: N.lineup, starters: N.starters, subs: N.subs, includeGK: N.gk };
+    const s = await S.api.createSweepstake({ name, displayName: dname, fixture: sel, rules: N.rules, awards: N.awards, drawConfig, members });
     N.sel = null; N.name = '';
+    if (N.mode !== 'friends') S.autoDeal = s.id; // no one to wait for: deal straight away
     S.busy = false; go('#/s/' + s.id);
   } catch (e) { S.busy = false; toast(e.message); renderNew(); }
 }
@@ -275,6 +306,7 @@ async function viewSweep(id) {
   V.state = await S.api.getState(V.data.sweep.fixtureId).catch(() => null);
   V.seen = V.state?.events?.length ?? 0;
   renderSweep();
+  if (S.autoDeal === id) { S.autoDeal = null; if (V.data.sweep.status === 'setup') await doDraw(); }
   S.unsub = S.api.subscribe(id, V.data.sweep.fixtureId, async (kind, payload) => {
     if (kind === 'state') { if (payload) applyState(payload); else await pollState(); }
     else { const before = JSON.stringify(V.data); await refreshSweep().catch(() => {}); if (JSON.stringify(V.data) !== before) renderSweepSafe(); }
@@ -312,6 +344,18 @@ function announce(newEvents) {
   }
 }
 
+async function shareUpdate() {
+  const { sweep } = V.data; const res = V.res; const st = V.state; const fx = sweep.fixture;
+  if (!res) return;
+  const score = st?.goals && st.goals.home != null ? `${fx.teams.home.name} ${st.goals.home}-${st.goals.away} ${fx.teams.away.name}` : `${fx.teams.home.name} v ${fx.teams.away.name}`;
+  const status = isFinished(st) ? 'Full time' : isLive(st) ? (st.status.short === 'HT' ? 'Half time' : `${st.status.elapsed ?? ''}'`) : 'Not started';
+  const lines = res.rows.map((r) => `${r.rank}. ${r.name} - ${r.points} pts`);
+  const last = res.feed.slice(-3).reverse().map((e) => `${{ goal: '⚽', penalty: '⚽', ownGoal: '😬', penMissed: '❌', yellow: '🟨', red: '🟥' }[e.kind]} ${e.minute} ${e.pname}${e.ownerMemberId ? ' (' + V.data.members.find((m) => m.id === e.ownerMemberId)?.name + ')' : ''}`);
+  const text = `${sweep.name}\n${score} (${status})\n\n${lines.join('\n')}${last.length ? '\n\nLatest:\n' + last.join('\n') : ''}`;
+  if (navigator.share) { try { await navigator.share({ text }); return; } catch { /* cancelled */ } }
+  await navigator.clipboard?.writeText(text); toast('Update copied - paste it in your group chat');
+}
+
 function matchHeader(fx, st) {
   const live = isLive(st), fin = isFinished(st), started = hasStarted(st);
   const sc = st?.goals && st.goals.home != null ? `<div class="score">${st.goals.home} - ${st.goals.away}</div>` : `<div class="score muted">v</div>`;
@@ -329,6 +373,7 @@ function renderSweep() {
   const st = V.state; const fx = sweep.fixture;
   let body = '';
   if (sweep.status === 'setup') body = lobby(sweep, members, isHost, st);
+  else if (sweep.status === 'drafting') { body = draftView(sweep, members, picks, isHost); queueMicrotask(cpuTurn); }
   else {
     const res = computeScores({ rules: sweep.rules, awards: sweep.awards, members, picks, state: st });
     V.res = res;
@@ -342,52 +387,140 @@ function renderSweep() {
     ${body}`, { title: sweep.name, sub: `Invite code ${sweep.code}` });
 }
 
+const members0 = () => V.data?.members || [];
+const kindBadge = (m) => (m?.kind === 'cpu' ? '<span class="badge cpu">CPU</span>' : '');
+
+function summaryText(dc) {
+  const c = cfgOf(dc);
+  const many = c.limit === 'all' ? 'The whole squads are shared out evenly' : `Each player gets <b style="color:var(--text)">${c.starters} starter${c.starters === 1 ? '' : 's'}</b>${c.pick === 'random' ? ' (spread across defence, midfield and attack' + (c.includeGK ? ', plus a keeper in the rotation' : '') + ')' : ''} and <b style="color:var(--text)">${c.subs} sub${c.subs === 1 ? '' : 's'}</b>${c.pick === 'random' ? ', split as evenly as possible between both teams' : ''}`;
+  return `${c.pick === 'draft' ? 'Snake draft, taking turns.' : 'Random deal.'} ${many}. <span class="muted">${LINEUP_TXT[c.lineup]}.</span>`;
+}
+
 function lobby(sweep, members, isHost, st) {
   const link = inviteLink(sweep.code);
-  const dc = sweep.drawConfig;
-  const feas = V.pool ? checkFeasible(V.pool, members.length, dc) : { ok: true };
+  const dc = cfgOf(sweep.drawConfig);
+  const feas = V.pool && dc.pick === 'random' && dc.limit === 'limited' ? checkFeasible(V.pool, members.length, dc) : { ok: true };
+  const friends = dc.mode === 'friends';
+  const locals = members.filter((m) => m.kind === 'local'), cpus = members.filter((m) => m.kind === 'cpu');
   return `
-    <div class="card stack" style="margin-top:12px">
+    ${friends ? `<div class="card stack" style="margin-top:12px">
       <div class="center small muted">Invite your friends with this code</div>
       <div class="code">${esc(sweep.code)}</div>
       <div class="row"><button class="grow" data-act="share">Share invite link</button><button class="soft" data-act="copy" data-t="${esc(link)}">Copy</button></div>
       <div class="small muted center" style="word-break:break-all">${esc(link)}</div>
-    </div>
+    </div>` : ''}
     <div class="card" style="margin-top:12px">
-      <div class="row between"><b>In the game (${members.length})</b><span class="small muted">updates live</span></div>
-      ${members.map((m) => `<div class="member"><span class="avatar">${esc(initials(m.name))}</span><span class="grow">${esc(m.name)}</span>${m.isHost ? '<span class="badge">HOST</span>' : ''}</div>`).join('')}
+      <div class="row between"><b>${friends ? 'In the game' : MODES[dc.mode]?.[1] || 'Players'} (${members.length})</b>${friends ? '<span class="small muted">updates live</span>' : ''}</div>
+      ${members.map((m) => `<div class="member"><span class="avatar">${esc(initials(m.name))}</span><span class="grow">${esc(m.name)}</span>${kindBadge(m)}${m.isHost ? '<span class="badge">HOST</span>' : ''}</div>`).join('')}
+      ${isHost && dc.mode === 'onephone' ? (V.namesEdit ? `<div class="stack" style="margin-top:8px"><textarea id="lnames">${esc(V.namesText ?? locals.map((m) => m.name).join('\n'))}</textarea><div class="row"><button class="grow" data-act="savenames">Save names</button><button class="ghost" data-act="cancelnames">Cancel</button></div></div>` : `<div style="margin-top:8px"><button class="soft sm" data-act="editnames">✏️ Change mates’ names</button></div>`) : ''}
+      ${isHost && dc.mode === 'cpu' ? `<div class="row between" style="margin-top:8px"><span class="small muted">Computer rivals</span>${stepper('lcpu', cpus.length)}</div>` : ''}
     </div>
-    <div class="card" style="margin-top:12px"><div class="small muted">Each friend gets <b style="color:var(--text)">${dc.starters} starter${dc.starters === 1 ? '' : 's'}</b> (spread across defence, midfield and attack${dc.includeGK ? ', plus a keeper in the rotation' : ''}) and <b style="color:var(--text)">${dc.subs} sub${dc.subs === 1 ? '' : 's'}</b>, split as evenly as possible between both teams.</div></div>
-    ${V.pool ? `<div class="banner ${V.pool.source === 'lineups' ? 'info' : ''}" style="margin-top:12px">${V.pool.source === 'lineups' ? '✅ Using the confirmed line-ups.' : '⚠️ Line-ups aren\'t out yet, so the draw uses the full squads - some players may not make the matchday squad. Line-ups usually land about an hour before kick-off; you can redraw then.'}</div>` : ''}
+    <div class="card" style="margin-top:12px"><div class="small muted">${summaryText(sweep.drawConfig)}</div></div>
+    ${V.pool ? `<div class="banner ${V.pool.source === 'lineups' ? 'info' : ''}" style="margin-top:12px">${V.pool.source === 'lineups' ? '✅ Using the confirmed line-ups.' : dc.lineup === 'squad' ? 'Using the full squads.' : '⚠️ Line-ups aren\'t out yet, so this uses the full squads - some players may not make the matchday squad. Line-ups usually land about an hour before kick-off; you can redraw then.'}</div>` : ''}
+    ${V.poolErr ? `<div class="banner err" style="margin-top:12px">${esc(V.poolErr)}${isHost && dc.lineup === 'xi' ? `<div style="margin-top:8px"><button class="soft sm" data-act="usesquads">Use full squads instead</button></div>` : ''}</div>` : ''}
     ${!feas.ok ? `<div class="banner err" style="margin-top:12px">${esc(feas.message)}</div>` : ''}
-    ${isHost ? `<div class="sticky-cta stack"><button class="block" data-act="draw" ${members.length < 2 || S.busy ? 'disabled' : ''}>🎲 ${members.length < 2 ? 'Waiting for friends…' : S.busy ? 'Drawing…' : 'Draw the players'}</button><div class="small muted center">Everyone who has joined is in. New joiners are blocked after the draw.</div></div>`
-    : `<p class="muted center" style="margin-top:16px">Waiting for the host to run the draw…</p>`}`;
+    ${isHost ? `<div class="sticky-cta stack"><button class="block" data-act="draw" ${members.length < 2 || S.busy ? 'disabled' : ''}>${members.length < 2 ? 'Waiting for friends…' : S.busy ? 'Working…' : dc.pick === 'draft' ? '🧢 Start the draft' : '🎲 Deal the players'}</button>${friends ? '<div class="small muted center">Everyone who has joined is in. New joiners are blocked once the players are dealt.</div>' : ''}</div>`
+    : `<p class="muted center" style="margin-top:16px">Waiting for the host to ${dc.pick === 'draft' ? 'start the draft' : 'run the draw'}…</p>`}`;
+}
+
+/** Fetch the player pool the way this game wants it (full squads, or confirmed line-ups only). */
+async function fetchPool(sweep) {
+  const dc = cfgOf(sweep.drawConfig);
+  const res = await S.api.getPool(sweep.fixture, true, dc.lineup === 'squad');
+  if (dc.lineup === 'xi' && res.source !== 'lineups') throw new Error('The line-ups aren’t out yet - they usually land about an hour before kick-off. Try again then, or switch to full squads.');
+  return res;
 }
 
 async function doDraw() {
   const { sweep, members } = V.data;
-  S.busy = true; renderSweep();
+  const dc = cfgOf(sweep.drawConfig);
+  S.busy = true; V.poolErr = ''; renderSweep();
   try {
-    const poolRes = await S.api.getPool(sweep.fixture, true);
+    const poolRes = await fetchPool(sweep);
     V.pool = poolRes;
-    const pool = { players: poolRes.players };
-    const { picks } = runDraw({ pool, memberIds: members.map((m) => m.id), config: sweep.drawConfig });
-    const byId = new Map(poolRes.players.map((p) => [p.id, p]));
-    const rows = picks.map((p) => { const pl = byId.get(p.playerId); return { memberId: p.memberId, playerId: p.playerId, playerName: pl.name, number: pl.number ?? null, photo: pl.photo || null, side: pl.side, teamId: pl.teamId ?? null, role: pl.role, slot: p.slot }; });
-    await S.api.saveDraw(sweep.id, rows);
-    await refreshSweep(); V.tab = 'teams';
-    toast('🎲 Players dealt!');
-  } catch (e) { toast(e.message); }
+    const players = poolRes.players;
+    const ids = members.map((m) => m.id);
+    if (dc.pick === 'draft') {
+      const each = draftEach(players.length, ids.length, dc);
+      if (each < 1) throw new Error('Not enough players for that many people.');
+      const order = ids.slice().sort(() => Math.random() - 0.5);
+      const pool = players.map((p) => ({ id: p.id, name: p.name, number: p.number ?? null, photo: p.photo || null, side: p.side, teamId: p.teamId ?? null, role: p.role, bench: p.bench ?? null }));
+      await S.api.startDraft(sweep.id, order, pool, each);
+      await refreshSweep(); toast('🧢 Draft started');
+    } else {
+      const { picks } = dc.limit === 'all' ? dealAll({ pool: { players }, memberIds: ids }) : runDraw({ pool: { players }, memberIds: ids, config: dc });
+      const byId = new Map(players.map((p) => [p.id, p]));
+      const rows = picks.map((p) => { const pl = byId.get(p.playerId); return { memberId: p.memberId, playerId: p.playerId, playerName: pl.name, number: pl.number ?? null, photo: pl.photo || null, side: pl.side, teamId: pl.teamId ?? null, role: pl.role, slot: p.slot }; });
+      await S.api.saveDraw(sweep.id, rows);
+      await refreshSweep(); V.tab = 'teams';
+      toast('🎲 Players dealt!');
+    }
+  } catch (e) { V.poolErr = e.message; toast(e.message); }
   S.busy = false; renderSweep();
+}
+
+// ---- draft
+const ROLE_ORDER = { ATT: 0, MID: 1, DEF: 2, GK: 3 };
+function draftView(sweep, members, picks, isHost) {
+  const dc = cfgOf(sweep.drawConfig); const order = dc.order || []; const each = dc.each || 1; const total = order.length * each;
+  const n = picks.length; const turnId = draftTurn(order, n); const turnM = members.find((m) => m.id === turnId);
+  const mine = turnM && (turnM.userId === S.user.id || (isHost && turnM.kind !== 'cpu'));
+  const taken = new Set(picks.map((p) => p.playerId));
+  const fx = sweep.fixture; const f = V.dfilter || { side: 'all', role: 'all' };
+  const avail = (sweep.pool || []).filter((p) => !taken.has(p.id) && (f.side === 'all' || p.side === f.side) && (f.role === 'all' || p.role === f.role))
+    .sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || (a.number ?? 99) - (b.number ?? 99));
+  const upcoming = Array.from({ length: Math.min(order.length, total - n) }, (_, i) => draftTurn(order, n + i));
+  const res = computeScores({ rules: sweep.rules, awards: sweep.awards, members, picks, state: V.state });
+  const chip = (k, v, label, on) => `<div class="chip ${on ? 'on' : ''}" data-act="dfilter" data-f="${k}" data-v="${v}">${esc(label)}</div>`;
+  return `
+    <div class="card turn stack" style="margin-top:12px">
+      <div class="row between"><b>🧢 Draft · pick ${Math.min(n + 1, total)} of ${total}</b><span class="small muted">${each} each</span></div>
+      <div style="font-size:20px;font-weight:800">${turnM ? (turnM.userId === S.user.id ? 'Your pick!' : `${esc(turnM.name)} is picking${turnM.kind === 'cpu' ? '…' : ''}`) : '…'}</div>
+      <div class="mini">${upcoming.map((id, i) => `<div class="chip ${i === 0 ? 'cur' : ''}">${esc(members.find((m) => m.id === id)?.name || '?')}</div>`).join('')}</div>
+      <div class="small muted">Snake order: the order reverses each round so nobody gets all the first picks.${isHost && turnM && turnM.userId !== S.user.id && turnM.kind !== 'cpu' ? ' As host you can pick for them.' : ''}</div>
+    </div>
+    <div class="chips" style="margin-top:12px;flex-wrap:wrap">${chip('side', 'all', 'Both teams', f.side === 'all')}${chip('side', 'home', fx.teams.home.name, f.side === 'home')}${chip('side', 'away', fx.teams.away.name, f.side === 'away')}</div>
+    <div class="chips" style="margin:8px 0;flex-wrap:wrap">${['all', 'ATT', 'MID', 'DEF', 'GK'].map((r) => chip('role', r, r === 'all' ? 'All positions' : r, f.role === r)).join('')}</div>
+    <div class="card dlist">${avail.map((p) => `<div class="dplayer">${p.photo ? `<img class="photo" src="${esc(p.photo)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : `<div class="shirt">${esc(p.number ?? '')}</div>`}
+      <div class="grow"><b>${esc(p.name)}</b><div class="small muted">${esc(fx.teams[p.side].name)}${p.number ? ' · #' + esc(p.number) : ''}</div></div>
+      <span class="badge ${p.role}">${p.role}</span>${p.bench === true ? '<span class="badge sub">SUB</span>' : ''}
+      <button class="sm" data-act="dpick" data-id="${p.id}" ${mine && !S.busy ? '' : 'disabled'}>Pick</button></div>`).join('') || '<p class="muted center">No players match that filter.</p>'}</div>
+    <h3 style="margin:22px 2px 8px">Picked so far</h3>
+    ${n ? teams(res, members, picks, sweep) : '<p class="muted center small">Nobody has picked yet.</p>'}`;
+}
+
+async function doDraftPick(playerId, memberId) {
+  const { sweep, members, picks } = V.data;
+  const turnId = draftTurn(sweep.drawConfig.order, picks.length);
+  S.busy = true; renderSweep();
+  try { await S.api.draftPick(sweep.id, memberId || turnId, playerId); await refreshSweep(); if (V.data.sweep.status === 'drawn') { V.tab = 'teams'; toast('✅ Draft complete - good luck!'); } }
+  catch (e) { toast(e.message); await refreshSweep().catch(() => {}); }
+  S.busy = false; renderSweep();
+}
+
+/** The host's device makes the computer's picks, after a short beat so it feels like it's thinking. */
+function cpuTurn() {
+  const d = V.data; if (!d || d.sweep.status !== 'drafting' || S.busy || V.cpuTimer) return;
+  const isHost = d.sweep.creatorId === S.user.id; if (!isHost) return;
+  const turn = d.members.find((m) => m.id === draftTurn(d.sweep.drawConfig.order, d.picks.length));
+  if (!turn || turn.kind !== 'cpu') return;
+  V.cpuTimer = setTimeout(async () => {
+    V.cpuTimer = null;
+    const cur = V.data; if (!cur || cur.sweep.status !== 'drafting' || S.route?.[0] !== 's') return;
+    const taken = new Set(cur.picks.map((p) => p.playerId));
+    const choice = cpuPick(cur.sweep.pool.filter((p) => !taken.has(p.id)));
+    if (choice) await doDraftPick(choice.id, turn.id);
+  }, 900);
 }
 
 function board(res, sweep) {
   const fin = isFinished(V.state);
   return `
+    <div class="row" style="margin-bottom:10px"><button class="soft sm grow" data-act="shareupdate">📋 Share an update with the group</button></div>
     <div class="stack">${res.rows.map((r) => `
       <div class="card" data-act="toggle" data-id="${r.memberId}" style="cursor:pointer">
         <div class="rank ${r.rank === 1 && r.points > 0 ? 'first' : ''}"><div class="pos">${r.rank}</div>
-          <div><b>${esc(r.name)}</b><div class="small muted">${r.goals} goal${r.goals === 1 ? '' : 's'} · ${r.bookings} booking${r.bookings === 1 ? '' : 's'}</div></div>
+          <div><b>${esc(r.name)}</b> ${kindBadge(members0().find((m) => m.id === r.memberId))}<div class="small muted">${r.goals} goal${r.goals === 1 ? '' : 's'} · ${r.bookings} booking${r.bookings === 1 ? '' : 's'}</div></div>
           <div class="pts ${r.points > 0 ? 'pos' : r.points < 0 ? 'neg' : ''}">${r.points}</div></div>
         ${V.open.has(r.memberId) ? `<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">${r.lines.length ? r.lines.map((l) => `<div class="line"><span>${esc(l.minute)} · <b>${esc(l.playerName)}</b> · ${esc(l.label)}</span><span class="${l.points >= 0 ? 'p-pos' : 'p-neg'}">${fmtPts(l.points)}</span></div>`).join('') : '<div class="small muted">Nothing yet.</div>'}</div>` : ''}
       </div>`).join('')}</div>
@@ -402,7 +535,7 @@ function teams(res, members, picks, sweep) {
   return `<div class="stack">${members.map((m) => {
     const mine = picks.filter((p) => p.memberId === m.id).sort((a, b) => (a.slot === 'sub') - (b.slot === 'sub'));
     const total = res.rows.find((r) => r.memberId === m.id)?.points ?? 0;
-    return `<div class="card"><div class="row between"><div class="row"><span class="avatar">${esc(initials(m.name))}</span><b>${esc(m.name)}</b></div><b class="pts ${total > 0 ? 'pos' : total < 0 ? 'neg' : ''}" style="font-size:26px">${total}</b></div>
+    return `<div class="card"><div class="row between"><div class="row"><span class="avatar">${esc(initials(m.name))}</span><b>${esc(m.name)}</b>${kindBadge(m)}</div><b class="pts ${total > 0 ? 'pos' : total < 0 ? 'neg' : ''}" style="font-size:26px">${total}</b></div>
       <div style="margin-top:8px">${mine.map((p) => {
         const pp = pts.get(p.playerId) || 0; const team = fx.teams[p.side];
         return `<div class="player">${p.photo ? `<img class="photo" src="${esc(p.photo)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'shirt',textContent:'${esc(p.number ?? '')}'}))">` : `<div class="shirt">${esc(p.number ?? '')}</div>`}
@@ -463,8 +596,12 @@ document.addEventListener('click', async (ev) => {
     case 'date': N.date = d.d; N.sel = null; return loadFixtures();
     case 'showall': N.all = true; return renderNew();
     case 'pickfx': N.sel = N.fixtures.find((f) => String(f.id) === d.id); N.name = ''; renderNew(); return setTimeout(() => document.getElementById('sname')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
-    case 'step': { const k = d.k, dlt = Number(d.d); const lim = { starters: [1, 8], subs: [0, 3] }[k]; N[k] = Math.max(lim[0], Math.min(lim[1], N[k] + dlt)); captureNew(); return renderNew(); }
+    case 'step': {
+      if (d.k === 'lcpu') { const cur = V.data.members.filter((m) => m.kind === 'cpu').length; const nn = Math.max(1, Math.min(7, cur + Number(d.d))); if (nn !== cur) { await S.api.setMembers(V.id, cpuNames(nn).map((n) => ({ name: n, kind: 'cpu' }))); await refreshSweep(); renderSweep(); } return; }
+      const k = d.k, dlt = Number(d.d); const lim = { starters: [1, 8], subs: [0, 3], cpu: [1, 7] }[k]; N[k] = Math.max(lim[0], Math.min(lim[1], N[k] + dlt)); captureNew(); return renderNew(); }
     case 'create': return createSweep();
+    case 'mode': captureNew(); N.mode = d.k; return renderNew();
+    case 'opt': { captureNew(); N[d.o] = d.k; if (d.o === 'lineup') setAppearance(N.rules, d.k === 'squad'); return renderNew(); }
     case 'rulestep': { const t = d.s === 'n' ? N.rules : V.edit.rules; t[d.k].points = Math.max(-10, Math.min(10, t[d.k].points + Number(d.d))); captureNew(); return d.s === 'n' ? renderNew() : renderSweep(); }
     // sweep
     case 'tab': V.tab = d.k; return renderSweep();
@@ -472,6 +609,13 @@ document.addEventListener('click', async (ev) => {
     case 'share': { const link = inviteLink(V.data.sweep.code); const text = `Join my Statto Sweepstake for ${V.data.sweep.fixture.teams.home.name} v ${V.data.sweep.fixture.teams.away.name}! Code ${V.data.sweep.code}`; if (navigator.share) { try { await navigator.share({ title: 'Statto Sweepstake', text, url: link }); return; } catch { /* cancelled */ } } await navigator.clipboard?.writeText(`${text} ${link}`); return toast('Invite copied'); }
     case 'copy': await navigator.clipboard?.writeText(d.t); return toast('Link copied');
     case 'draw': return doDraw();
+    case 'dpick': return doDraftPick(Number(d.id));
+    case 'dfilter': V.dfilter = { ...(V.dfilter || { side: 'all', role: 'all' }), [d.f]: d.v }; return renderSweep();
+    case 'shareupdate': return shareUpdate();
+    case 'editnames': V.namesEdit = true; V.namesText = undefined; return renderSweep();
+    case 'cancelnames': V.namesEdit = false; V.namesText = undefined; return renderSweep();
+    case 'savenames': { const names = parseNames(document.getElementById('lnames').value); if (!names.length) return toast('Add at least one name'); await S.api.setMembers(V.id, names.map((n) => ({ name: n, kind: 'local' }))); V.namesEdit = false; V.namesText = undefined; await refreshSweep(); return renderSweep(); }
+    case 'usesquads': { const sw = V.data.sweep; const dc = { ...cfgOf(sw.drawConfig), lineup: 'squad' }; const rules = clone(sw.rules); setAppearance(rules, true); await S.api.updateSetup(V.id, dc, rules); V.poolErr = ''; await refreshSweep(); return renderSweep(); }
     case 'refresh': await pollState(true); return renderSweep();
     case 'demokick': await S.api.startDemoMatch(); await pollState(); return;
     case 'editrules': V.edit = { rules: clone(V.data.sweep.rules), awards: clone(V.data.sweep.awards) }; return renderSweep();
@@ -489,8 +633,10 @@ document.addEventListener('change', (ev) => {
 document.addEventListener('input', (ev) => {
   if (ev.target.id === 'fxq') { N.q = ev.target.value; S.focusQ = true; clearTimeout(S.qt); S.qt = setTimeout(renderNew, 150); }
   if (ev.target.id === 'joincode') ev.target.value = ev.target.value.toUpperCase();
+  if (ev.target.id === 'nnames') N.names = ev.target.value;
+  if (ev.target.id === 'lnames') V.namesText = ev.target.value;
 });
-function captureNew() { const s = document.getElementById('sname'), d = document.getElementById('dname'); if (s) N.name = s.value; if (d) N.dname = d.value; }
+function captureNew() { const s = document.getElementById('sname'), d = document.getElementById('dname'), t = document.getElementById('nnames'); if (s) N.name = s.value; if (d) N.dname = d.value; if (t) N.names = t.value; }
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target.id === 'gname') doGuest(); if (ev.key === 'Enter' && (ev.target.id === 'aemail' || ev.target.id === 'apass')) doPassword(AUTH.mode === 'signup'); if (ev.key === 'Enter' && ev.target.id === 'joincode') document.querySelector('[data-act=joincode]')?.click(); });
 document.addEventListener('focusin', (ev) => { S.focusQ = ev.target.id === 'fxq'; });
 

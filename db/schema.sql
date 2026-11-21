@@ -175,3 +175,6 @@ grant update (display_name) on public.members to authenticated;
 -- @@
 grant execute on function public.is_member(uuid), public.is_host(uuid), public.create_sweepstake(text,text,bigint,jsonb,jsonb,jsonb,jsonb),
   public.preview_sweepstake(text), public.join_sweepstake(text,text), public.save_draw(uuid,jsonb), public.reopen_draw(uuid), public.update_rules(uuid,jsonb,jsonb) to authenticated;
+
+-- @@
+-- NOTE: game-mode changes (members.kind, sweepstakes.pool, draft RPCs) live in db/migrations/002_modes.sql - apply it after this file.

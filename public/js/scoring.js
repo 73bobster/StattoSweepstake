@@ -14,7 +14,12 @@ export const DEFAULT_RULES = {
   yellow:    { label: 'Yellow card',           points: -1, on: true },
   red:       { label: 'Red card',              points: -3, on: true },
   cleanSheet:{ label: 'Clean sheet (GK/DEF who played)', points: 2, on: true },
+  // Appearance points - switched on automatically for full-squad games, where many dealt players never play
+  starts:    { label: 'Starts the match',      points: 1,  on: false },
+  subOn:     { label: 'Comes on as a sub',     points: 1,  on: false },
+  subbedOff: { label: 'Subbed off',            points: -1, on: false },
 };
+export const APPEARANCE_KEYS = ['starts', 'subOn', 'subbedOff'];
 
 export const DEFAULT_AWARDS = {
   firstScorer:  { label: 'First goalscorer',          on: true },
@@ -86,6 +91,7 @@ export function computeScores({ rules, awards, members, picks, state }) {
     const r = rules[key];
     const row = board.get(pick.memberId);
     if (!row) return;
+    if (APPEARANCE_KEYS.includes(key) && !(r && r.on)) return; // appearance points only show when switched on
     const pts = r && r.on ? r.points : 0;
     row.points += pts;
     row.lines.push({ playerId: pick.playerId, playerName: pick.playerName, key, label: r?.label || key, points: pts, minute: minuteLabel });
@@ -114,6 +120,22 @@ export function computeScores({ rules, awards, members, picks, state }) {
     if (ev.type === 'Goal' && !/own|missed/i.test(ev.detail || '') && ev.aid) {
       const a = ownerOf.get(ev.aid);
       if (a) add(a, 'assist', minute);
+    }
+  }
+
+  // Appearance points (only once the match has started and line-ups are known)
+  if (hasStarted(state) && state.lineups) {
+    const startXI = new Set(['home', 'away'].flatMap((side) => state.lineups[side]?.startXI || []));
+    const subs = events.filter((e) => e.type === 'subst');
+    const cameOn = new Map(); const wentOff = new Map();
+    for (const ev of subs) {
+      if (ev.aid) cameOn.set(ev.aid, ev.x != null ? `${ev.x}${ev.e ? '+' + ev.e : ''}'` : '');
+      if (ev.pid) wentOff.set(ev.pid, ev.x != null ? `${ev.x}${ev.e ? '+' + ev.e : ''}'` : '');
+    }
+    for (const p of picks) {
+      if (startXI.has(p.playerId)) add(p, 'starts', 'KO');
+      if (cameOn.has(p.playerId)) add(p, 'subOn', cameOn.get(p.playerId));
+      if (wentOff.has(p.playerId)) add(p, 'subbedOff', wentOff.get(p.playerId));
     }
   }
 

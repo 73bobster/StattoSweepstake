@@ -104,8 +104,9 @@ export async function onRequestPost({ request, env }) {
       // Player pool for the draw: confirmed lineups if announced, otherwise the two squads.
       const id = Number(body.fixtureId), home = Number(body.homeId), away = Number(body.awayId);
       if (!id || !home || !away) return json({ error: 'Missing ids' }, 400);
-      const lu = await cached(`lineups:${id}`, 10 * 60, () => call(`/fixtures/lineups?fixture=${id}`), !!body.force);
-      const lineups = normLineups(lu.data, home);
+      // body.squadOnly: deal from the full squads even if line-ups are out (saves an API call too)
+      const lu = body.squadOnly ? { data: null, fetchedAt: null } : await cached(`lineups:${id}`, 10 * 60, () => call(`/fixtures/lineups?fixture=${id}`), !!body.force);
+      const lineups = body.squadOnly ? null : normLineups(lu.data, home);
       let players, source;
       if (lineups) {
         source = 'lineups';
