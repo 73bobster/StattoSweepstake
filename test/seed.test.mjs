@@ -40,6 +40,7 @@ globalThis.fetch = async (url, init) => {
   if (url.startsWith('https://v3.football.api-sports.io')) {
     apiCalls.push(url);
     if (url.includes('/fixtures?date')) return ok({ errors: [], response: [fx(1, 39, [1, 'Arsenal'], [2, 'Chelsea']), fx(2, 179, [3, 'Celtic'], [4, 'Rangers']), fx(3, 2, [9, 'Champions League Team'], [8, 'Other'])] });
+    if (url.includes('/injuries?fixture=7')) return ok({ errors: [], response: [{ player: { id: 50, name: 'Pl', type: 'Missing Fixture', reason: 'Knee Injury' } }] });
     if (url.includes('/players/squads')) return ok({ errors: [], response: [{ players: [{ id: 50, name: 'Pl', number: 7, position: 'Midfielder', photo: 'p' }] }] });
   }
   if (url.includes('api-sports')) return ok({ errors: [], response: [] });
@@ -64,7 +65,10 @@ const before = apiCalls.length; await post({ action: 'seedSquads' }); assert.equ
 const before2 = apiCalls.length;
 const pool = await post({ action: 'pool', fixtureId: 1, homeId: 1, awayId: 2, squadOnly: true });
 assert.equal(pool.source, 'squads'); assert.equal(pool.players.length, 2); assert.equal(pool.players[0].role, 'MID'); assert.equal(pool.players[0].side, 'home');
-assert.equal(apiCalls.length, before2, 'squad pool makes zero API calls');
+assert.ok(apiCalls.length - before2 <= 1, 'squad pool makes at most one API call (injuries)'); assert.deepEqual(pool.excluded, []);
+const before3 = apiCalls.length; await post({ action: 'pool', fixtureId: 1, homeId: 1, awayId: 2, squadOnly: true }); assert.equal(apiCalls.length, before3, 'injuries are cached');
+const inj = await post({ action: 'pool', fixtureId: 7, homeId: 1, awayId: 2, squadOnly: true });
+assert.equal(inj.players.length, 0); assert.equal(inj.excluded.length, 2); assert.equal(inj.excluded[0].reason, 'Knee Injury');
 // concurrent run is refused
 db.locked = true; const busy = await post({ action: 'seedSquads' }); assert.equal(busy.busy, true); db.locked = false;
 // budget guard

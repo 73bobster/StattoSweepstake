@@ -436,9 +436,9 @@ function waitTxt(fx = V.data?.sweep?.fixture, st = V.state) {
 function matchHeader(fx, st) {
   const live = isLive(st), fin = isFinished(st), started = hasStarted(st);
   const sc = st?.goals && st.goals.home != null ? `<div class="score">${st.goals.home} - ${st.goals.away}</div>` : `<div class="score muted">v</div>`;
-  const status = fin ? '<span class="pill">Full time</span>' : live ? `<span class="pill live">${st.status.short === 'HT' ? 'Half time' : (st.status.elapsed ?? '') + "'"}</span>` : st && started ? `<span class="pill">${esc(st.status.long)}</span>` : waitTxt(fx, st).startsWith('Match due') ? `<span class="pill">Due to start</span>` : `<span class="pill">${dayStr(fx.kickoff)} · ${timeStr(st?.kickoff || fx.kickoff)}</span>`;
-  return `<div class="card match">
-    <div class="small muted" style="margin-bottom:8px">${esc(fx.league?.name || '')}</div>
+  const status = fin ? '<span class="pill">Full time</span>' : live ? `<span class="pill live">${st.status.short === 'HT' ? 'Half time' : (st.status.elapsed ?? '') + "'"}</span>` : st && started ? `<span class="pill">${esc(st.status.long)}</span>` : waitTxt(fx, st).startsWith('Match due') ? `<span class="pill">Due to start</span>` : `<span class="pill">Not started · ${dayStr(fx.kickoff)} ${timeStr(st?.kickoff || fx.kickoff)}</span>`;
+  return `<div class="card match" style="padding-top:10px;padding-bottom:10px">
+    <div class="small muted" style="margin-bottom:4px">${esc(fx.league?.name || '')}</div>
     <div class="teams"><div>${crest(fx.teams.home, true)}<div class="tn">${esc(fx.teams.home.name)}</div></div><div>${sc}<div style="margin-top:8px">${status}</div></div><div>${crest(fx.teams.away, true)}<div class="tn">${esc(fx.teams.away.name)}</div></div></div></div>`;
 }
 
@@ -493,7 +493,7 @@ function lobby(sweep, members, isHost, st) {
       ${isHost && dc.mode === 'cpu' ? `<div class="row between" style="margin-top:8px"><span class="small muted">Computer rivals</span>${stepper('lcpu', cpus.length)}</div>` : ''}
     </div>
     <div class="card" style="margin-top:12px"><div class="small muted">${summaryText(sweep.drawConfig)}</div></div>
-    ${V.pool ? `<div class="banner ${V.pool.source === 'lineups' ? 'info' : ''}" style="margin-top:12px">${V.pool.source === 'lineups' ? '✅ Using the confirmed line-ups.' : dc.lineup === 'squad' ? 'Using the full squads.' : '⚠️ Line-ups aren\'t out yet, so this uses the full squads - some players may not make the matchday squad. Line-ups usually land about an hour before kick-off; you can redraw then.'}</div>` : ''}
+    ${V.pool ? `<div class="banner ${V.pool.source === 'lineups' ? 'info' : ''}" style="margin-top:8px;padding:8px 10px;font-size:13px">${V.pool.source === 'lineups' ? '✅ Confirmed line-ups' : dc.lineup === 'squad' ? 'Full squads' : '⚠️ Line-ups not out yet - using full squads; redraw once they land'}${V.pool.excluded?.length ? ` · ${V.pool.excluded.length} injured left out` : ''}</div>` : ''}
     ${V.poolErr ? `<div class="banner err" style="margin-top:12px">${esc(V.poolErr)}${isHost && dc.lineup === 'xi' ? `<div style="margin-top:8px"><button class="soft sm" data-act="usesquads">Use full squads instead</button></div>` : ''}</div>` : ''}
     ${!feas.ok ? `<div class="banner err" style="margin-top:12px">${esc(feas.message)}</div>` : ''}
     ${isHost ? `<div class="sticky-cta stack"><button class="block" data-act="draw" ${members.length < 2 || S.busy ? 'disabled' : ''}>${members.length < 2 ? 'Waiting for friends…' : S.busy ? 'Working…' : dc.pick === 'draft' ? '🧢 Start the draft' : '🎲 Deal the players'}</button>${friends ? '<div class="small muted center">Everyone who has joined is in. New joiners are blocked once the players are dealt.</div>' : ''}</div>`
@@ -599,7 +599,7 @@ function board(res, sweep) {
         <div class="rank ${r.rank === 1 && r.points > 0 ? 'first' : ''}"><div class="pos">${r.rank}</div>
           <div><b>${esc(r.name)}</b> ${kindBadge(members0().find((m) => m.id === r.memberId))}<div class="small muted">${r.goals} goal${r.goals === 1 ? '' : 's'} · ${r.bookings} booking${r.bookings === 1 ? '' : 's'}</div></div>
           <div class="pts ${r.points > 0 ? 'pos' : r.points < 0 ? 'neg' : ''}">${r.points}</div></div>
-        ${V.open.has(r.memberId) ? `<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">${r.lines.length ? r.lines.map((l) => `<div class="line"><span>${esc(l.minute)} · <b>${esc(l.playerName)}</b> · ${esc(l.label)}</span><span class="${l.points >= 0 ? 'p-pos' : 'p-neg'}">${fmtPts(l.points)}</span></div>`).join('') : `<div class="small muted">${esc(waitTxt() || 'Nothing yet.')}</div>`}</div>` : ''}
+        ${V.open.has(r.memberId) ? `<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">${r.lines.length ? r.lines.map((l) => `<div class="line"><span>${esc(l.minute)} · <b>${esc(l.playerName)}</b> · ${esc(l.label)}</span><span class="${l.points >= 0 ? 'p-pos' : 'p-neg'}">${fmtPts(l.points)}</span></div>`).join('') : `${waitTxt() ? '' : '<div class="small muted">Nothing yet.</div>'}`}</div>` : ''}
       </div>`).join('')}</div>
     <h3 style="margin:22px 2px 8px">Side prizes ${fin ? '' : '<span class="small" style="text-transform:none">· live, not final</span>'}</h3>
     <div class="card">${Object.entries(res.awards).map(([k, a]) => `<div class="award"><div><b>${esc(sweep.awards[k].label)}</b><div class="small muted">${esc(a.detail || '')}${a.unowned ? ' · player not in anyone’s hand' : ''}</div></div><div class="w ${a.winner?.length ? (a.final ? 'gold' : '') : 'muted'}">${a.winner?.length ? esc(a.winner.join(' & ')) : '—'}</div></div>`).join('') || '<p class="muted small">No side prizes switched on.</p>'}</div>`;
@@ -632,7 +632,7 @@ function mates(res, members, picks, sweep) {
         ${g.list.map((p) => {
           const ls = ptsOf(p.playerId); const pp = ls.reduce((t, l) => t + l.points, 0);
           return `<div class="player">${p.photo ? `<img class="photo" src="${esc(p.photo)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'shirt',textContent:'${esc(p.number ?? '')}'}))">` : `<div class="shirt">${esc(p.number ?? '')}</div>`}
-            <div class="grow"><b>${esc(p.playerName)}</b><div class="small muted">${ls.length ? ls.map((l) => `${esc(l.minute)} ${esc(l.label)} (${fmtPts(l.points)})`).join(' · ') : esc(waitTxt() || 'Nothing yet')}</div></div>
+            <div class="grow"><b>${esc(p.playerName)}</b>${ls.length ? `<div class="small muted">${ls.map((l) => `${esc(l.minute)} ${esc(l.label)} (${fmtPts(l.points)})`).join(' · ')}</div>` : waitTxt() ? '' : '<div class="small muted">Nothing yet</div>'}</div>
             <span class="badge ${p.role}">${p.role}</span>${p.slot === 'sub' ? '<span class="badge sub">SUB</span>' : ''}
             <b class="${pp > 0 ? 'p-pos' : pp < 0 ? 'p-neg' : 'muted'}" style="min-width:28px;text-align:right">${pp ? fmtPts(pp) : '0'}</b></div>`;
         }).join('')}`).join('')}
