@@ -196,17 +196,17 @@ export async function onRequestPost({ request, env }) {
       }
       // Leave out players the API lists as missing this fixture through injury/suspension ("Missing Fixture"; "Questionable" players stay in).
       // Line-ups already exclude them. Best effort: if the injuries look-up fails (budget, coverage) we simply don't filter.
-      let excluded = [];
+      let excluded = [], injuriesError = null;
       if (source === 'squads') {
         try {
           const inj = await cached(`injuries:${id}`, 3 * 3600, () => call(`/injuries?fixture=${id}`), !!body.force);
           const out = new Map((inj.data || []).filter((i) => i.player?.type === 'Missing Fixture').map((i) => [i.player.id, i.player.reason || 'Injured']));
           excluded = players.filter((p) => out.has(p.id)).map((p) => ({ id: p.id, name: p.name, reason: out.get(p.id) }));
           players = players.filter((p) => !out.has(p.id));
-        } catch { /* keep everyone */ }
+        } catch (e) { injuriesError = String(e.message || e).slice(0, 120); /* keep everyone */ }
       }
       players.forEach((p) => { p.photo = p.photo || `https://media.api-sports.io/football/players/${p.id}.png`; });
-      return json({ source, players, excluded, fetchedAt: lu.fetchedAt });
+      return json({ source, players, excluded, injuriesError, fetchedAt: lu.fetchedAt });
     }
 
     if (action === 'state') {

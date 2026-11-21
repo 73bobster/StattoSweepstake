@@ -33,7 +33,7 @@ const MODES = {
 };
 /** Settings of a sweepstake, with defaults for games made before modes existed. */
 const cfgOf = (dc = {}) => ({ mode: 'friends', pick: 'random', limit: 'limited', lineup: 'auto', starters: 3, subs: 1, includeGK: false, ...dc });
-const LINEUP_TXT = { squad: 'Full squads, deal any time', xi: 'Starting XI (about 1 hr before kick-off)', auto: 'Line-ups if out, else squads' };
+const LINEUP_TXT = { squad: 'Full squads (starting 11 + bench once line-ups are out)', xi: 'Starting XI (about 1 hr before kick-off)', auto: 'Line-ups if out, else squads' };
 function setAppearance(rules, on) { APPEARANCE_KEYS.forEach((k) => { if (rules[k]) rules[k].on = on; }); }
 const parseNames = (t) => [...new Set(String(t || '').split(/[\n,]/).map((x) => x.trim().slice(0, 30)).filter(Boolean))].slice(0, 11);
 
@@ -493,18 +493,21 @@ function lobby(sweep, members, isHost, st) {
       ${isHost && dc.mode === 'cpu' ? `<div class="row between" style="margin-top:8px"><span class="small muted">Computer rivals</span>${stepper('lcpu', cpus.length)}</div>` : ''}
     </div>
     <div class="card" style="margin-top:12px"><div class="small muted">${summaryText(sweep.drawConfig)}</div></div>
-    ${V.pool ? `<div class="banner ${V.pool.source === 'lineups' ? 'info' : ''}" style="margin-top:8px;padding:8px 10px;font-size:13px">${V.pool.source === 'lineups' ? '✅ Confirmed line-ups' : dc.lineup === 'squad' ? 'Full squads' : '⚠️ Line-ups not out yet - using full squads; redraw once they land'}${V.pool.excluded?.length ? ` · ${V.pool.excluded.length} injured left out` : ''}</div>` : ''}
+    ${V.pool ? `<div class="banner ${V.pool.source === 'lineups' ? 'info' : ''}" style="margin-top:8px;padding:8px 10px;font-size:13px">${V.pool.source === 'lineups' ? '✅ Confirmed line-ups' : dc.lineup === 'squad' ? 'Full squads' : '⚠️ Line-ups not out yet - using full squads; redraw once they land'}${V.pool.source === 'lineups' ? '' : V.pool.excluded?.length ? ` · ${V.pool.excluded.length} injured left out` : V.pool.injuriesError ? ' · injury check failed' : ' · no injuries listed'}</div>` : ''}
     ${V.poolErr ? `<div class="banner err" style="margin-top:12px">${esc(V.poolErr)}${isHost && dc.lineup === 'xi' ? `<div style="margin-top:8px"><button class="soft sm" data-act="usesquads">Use full squads instead</button></div>` : ''}</div>` : ''}
     ${!feas.ok ? `<div class="banner err" style="margin-top:12px">${esc(feas.message)}</div>` : ''}
     ${isHost ? `<div class="sticky-cta stack"><button class="block" data-act="draw" ${members.length < 2 || S.busy ? 'disabled' : ''}>${members.length < 2 ? 'Waiting for friends…' : S.busy ? 'Working…' : dc.pick === 'draft' ? '🧢 Start the draft' : '🎲 Deal the players'}</button>${friends ? '<div class="small muted center">Everyone who has joined is in. New joiners are blocked once the players are dealt.</div>' : ''}</div>`
     : `<p class="muted center" style="margin-top:16px">Waiting for the host to ${dc.pick === 'draft' ? 'start the draft' : 'run the draw'}…</p>`}`;
 }
 
-/** Fetch the player pool the way this game wants it (full squads, or confirmed line-ups only). */
+/** Fetch the player pool. Close to kick-off the confirmed line-ups (starting XI + bench) are the only players dealt. */
 async function fetchPool(sweep) {
   const dc = cfgOf(sweep.drawConfig);
-  const res = await S.api.getPool(sweep.fixture, true, dc.lineup === 'squad');
-  if (dc.lineup === 'xi' && res.source !== 'lineups') throw new Error('The line-ups aren’t out yet - they usually land about an hour before kick-off. Try again then, or switch to full squads.');
+  const mins = (Date.parse(sweep.fixture.kickoff) - Date.now()) / 60000;
+  const soon = !Number.isNaN(mins) && mins <= 90;   // line-ups usually appear about an hour before kick-off: look for them
+  const mustHave = dc.lineup === 'xi' || (!Number.isNaN(mins) && mins <= 45); // in the last 45 minutes nobody outside XI + bench is dealt
+  const res = await S.api.getPool(sweep.fixture, true, dc.lineup === 'squad' && !soon);
+  if (mustHave && res.source !== 'lineups') throw new Error(dc.lineup === 'xi' ? 'The line-ups aren’t out yet - they usually land about an hour before kick-off. Try again then, or switch to full squads.' : 'Line-ups aren’t out yet and kick-off is close. Try again in a few minutes - only the starting 11 and bench are dealt now.');
   return res;
 }
 
