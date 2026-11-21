@@ -176,6 +176,16 @@ export async function onRequestPost({ request, env }) {
       return json({ fixtures: r.data, fetchedAt: r.fetchedAt });
     }
 
+    if (action === 'search') { // find a team or league by name for favourites (cached a month: names rarely change)
+      const kind = body.kind === 'league' ? 'league' : 'team';
+      const q = String(body.q || '').replace(/[^a-zA-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+      if (q.length < 3) return json({ results: [] });
+      const r = await cached(`search:${kind}:${q.toLowerCase()}`, 30 * 86400, async () => {
+        const resp = (await call(`/${kind === 'league' ? 'leagues' : 'teams'}?search=${encodeURIComponent(q)}`)) || [];
+        return resp.map((x) => kind === 'league' ? { id: x.league.id, name: x.league.name, logo: x.league.logo, country: x.country?.name || '' } : { id: x.team.id, name: x.team.name, logo: x.team.logo, country: x.team.country || '' }).slice(0, 15);
+      });
+      return json({ results: r.data });
+    }
     if (action === 'pool') {
       // Player pool for the draw: confirmed lineups if announced, otherwise the two squads.
       const id = Number(body.fixtureId), home = Number(body.homeId), away = Number(body.awayId);

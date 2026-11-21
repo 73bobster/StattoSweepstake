@@ -153,6 +153,34 @@ async function ensureSquads() {
   } catch (e) { S.squadErr = e.message; } finally { S.seeding = false; refreshSettings(); }
 }
 
+// ---- favourite leagues and teams (signed-in users)
+function favSection() {
+  const P = S.prefs || { leagues: [], teams: [] };
+  const chip = (kind, x) => `<span class="chip on" style="display:inline-flex;gap:6px;align-items:center;padding:6px 10px">${x.logo ? `<img class="crest" style="width:16px;height:16px" src="${esc(x.logo)}" alt="">` : ''}${esc(x.name)}<b data-act="favdel" data-kind="${kind}" data-id="${x.id}" style="cursor:pointer;padding:0 2px" aria-label="Remove">✕</b></span>`;
+  return `<div class="sec">My football</div>
+    <div class="card flat">
+      <div class="small muted">Favourite leagues and teams. They narrow the matches you see when you start a sweepstake.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${P.leagues.map((x) => chip('league', x)).join('')}${P.teams.map((x) => chip('team', x)).join('') || ''}${!P.leagues.length && !P.teams.length ? '<span class="small muted">None yet</span>' : ''}</div>
+      <div class="tabs" style="margin-top:10px"><button class="${S.favKind !== 'league' ? 'on' : ''}" data-act="favkind" data-k="team">Team</button><button class="${S.favKind === 'league' ? 'on' : ''}" data-act="favkind" data-k="league">League</button></div>
+      <input type="search" id="favq" placeholder="Search ${S.favKind === 'league' ? 'a league' : 'a team'} (3+ letters)" style="margin-top:8px">
+      <div id="favres" class="small" style="margin-top:6px"></div>
+    </div>`;
+}
+let favTimer;
+function favSearch(q) {
+  clearTimeout(favTimer);
+  const box = document.getElementById('favres'); if (!box) return;
+  if (q.trim().length < 3) { box.innerHTML = ''; return; }
+  box.innerHTML = '<span class="muted">Searching…</span>';
+  favTimer = setTimeout(async () => {
+    try {
+      S.favRes = await S.api.searchFootball(S.favKind === 'league' ? 'league' : 'team', q.trim());
+      box.innerHTML = S.favRes.length ? S.favRes.map((x, i) => `<button class="soft block" data-act="favadd" data-i="${i}" style="display:flex;gap:8px;align-items:center;margin-top:4px;text-align:left">${x.logo ? `<img class="crest" style="width:20px;height:20px" src="${esc(x.logo)}" alt="">` : ''}<span>${esc(x.name)} <span class="muted">${esc(x.country || '')}</span></span></button>`).join('') : `<span class="muted">${S.api.mode === 'neon' ? 'No matches.' : 'Search needs the live site.'}</span>`;
+    } catch (e) { box.innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
+  }, 350);
+}
+async function saveFavs() { try { await S.api.savePrefs(S.prefs.leagues, S.prefs.teams); } catch (e) { toast(e.message); } refreshSettings(); }
+
 function settingsModal() {
   const u = S.user; const t = localStorage.getItem('statto_theme') || 'light'; const ac = localStorage.getItem('statto_accent') || 'Blue';
   return `<div class="modal-back" data-act="closesettings"><div class="modal">
@@ -161,6 +189,7 @@ function settingsModal() {
     <div class="small muted">Theme</div><div class="chips" style="flex-wrap:wrap">${THEMES.map(([k, l]) => `<div class="chip ${t === k ? 'on' : ''}" data-act="theme" data-k="${k}">${l}</div>`).join('')}</div>
     <div class="small muted" style="margin-top:10px">App colour</div><div class="chips" style="flex-wrap:wrap">${ACCENTS.map(([n, a, b]) => `<div class="swatch ${ac === n ? 'on' : ''}" title="${n}" data-act="accent" data-k="${n}" style="background:linear-gradient(135deg,${a} 50%,${b} 50%)"></div>`).join('')}</div>
     ${S.api.mode === 'neon' ? squadsSection() : ''}
+    ${!u.guest ? favSection() : ''}
     ${S.api.mode === 'neon' && !u.guest ? footballDataSection() : ''}
     <div class="sec">Account</div>
     <div class="card flat"><div class="kv"><span>Signed in as</span><b>${esc(u.name || '—')}</b></div><div class="kv"><span>Email</span><b>${u.guest ? 'Guest (no email)' : esc(u.email || '')}</b></div></div>
@@ -260,12 +289,16 @@ async function doJoin(code, name) {
 
 // ------------------------------------------------------------------ new sweepstake
 // Defaults = the quickest set-up: one phone, random deal, full squads from both teams.
-const N = { date: ymd(new Date()), fixtures: null, q: '', all: false, sel: null, name: '', starters: 3, subs: 1, gk: false, rules: clone(DEFAULT_RULES), awards: clone(DEFAULT_AWARDS), dname: '',
+const N = { date: ymd(new Date()), fixtures: null, q: '', scope: null, league: null, sel: null, name: '', starters: 3, subs: 1, gk: false, rules: clone(DEFAULT_RULES), awards: clone(DEFAULT_AWARDS), dname: '',
   mode: 'onephone', names: '', cpu: 2, pick: 'random', limit: 'limited', lineup: 'squad' };
 setAppearance(N.rules, true);
 
+const favCount = () => (S.prefs?.leagues?.length || 0) + (S.prefs?.teams?.length || 0);
+async function loadPrefs() { if (S.prefs || !S.user) return; try { S.prefs = await S.api.getPrefs(); } catch { S.prefs = { leagues: [], teams: [] }; } }
 async function viewNew() {
   N.dname ||= S.user.name || '';
+  await loadPrefs();
+  if (!N.scope) N.scope = favCount() ? 'mine' : 'featured';
   renderNew();
   await loadFixtures();
 }
@@ -281,24 +314,30 @@ function renderNew() {
   const q = N.q.trim().toLowerCase();
   const featuredCount = list.filter((f) => FEATURED.includes(f.league.id)).length;
   if (q) list = list.filter((f) => `${f.teams.home.name} ${f.teams.away.name} ${f.league.name} ${f.league.country}`.toLowerCase().includes(q));
-  else if (!N.all && featuredCount) list = list.filter((f) => FEATURED.includes(f.league.id));
+  else if (N.league) list = list.filter((f) => f.league.id === N.league);
+  else if (N.scope === 'mine') { const fl = new Set((S.prefs?.leagues || []).map((l) => l.id)), ft = new Set((S.prefs?.teams || []).map((t) => t.id)); list = list.filter((f) => fl.has(f.league.id) || ft.has(f.teams.home.id) || ft.has(f.teams.away.id)); }
+  else if (N.scope === 'featured' && featuredCount) list = list.filter((f) => FEATURED.includes(f.league.id));
   const total = list.length; list = list.slice(0, 120);
   const groups = {};
   list.forEach((f) => (groups[f.league.id] ||= { l: f.league, items: [] }).items.push(f));
   const gs = Object.values(groups).sort((a, b) => (FEATURED.indexOf(a.l.id) + 1 || 999) - (FEATURED.indexOf(b.l.id) + 1 || 999) || a.l.name.localeCompare(b.l.name));
+  const lgMap = new Map(); (N.fixtures || []).forEach((f) => lgMap.set(f.league.id, f.league));
+  const leaguesToday = [...lgMap.values()].sort((a, b) => (FEATURED.indexOf(a.id) + 1 || 999) - (FEATURED.indexOf(b.id) + 1 || 999) || a.name.localeCompare(b.name));
   const sel = N.sel;
   const cfg = { starters: N.starters, subs: N.subs, includeGK: N.gk };
 
   $app.innerHTML = shell(`
     <div class="sec" style="margin-top:0">1 · Pick a match</div>
     <div class="chips">${days.map((d) => `<div class="chip ${ymd(d) === N.date ? 'on' : ''}" data-act="date" data-d="${ymd(d)}">${d.toLocaleDateString([], { weekday: 'short' })}<small>${d.getDate()} ${d.toLocaleDateString([], { month: 'short' })}</small></div>`).join('')}</div>
-    <input type="search" id="fxq" placeholder="Search team or league" value="${esc(N.q)}" style="margin:10px 0">
+    <div class="chips" style="margin-top:10px">${[...(favCount() ? [['mine', '⭐ Mine']] : []), ['featured', 'Featured'], ['all', `All${N.fixtures ? ' (' + N.fixtures.length + ')' : ''}`]].map(([k, l]) => `<div class="chip ${!N.league && N.scope === k ? 'on' : ''}" data-act="scope" data-k="${k}" style="min-width:0;padding:8px 14px">${l}</div>`).join('')}</div>
+    ${leaguesToday.length > 1 ? `<select id="fxl" style="margin-top:8px"><option value="">All leagues</option>${leaguesToday.map((l) => `<option value="${l.id}" ${N.league === l.id ? 'selected' : ''}>${esc(l.name)}${l.country ? ' · ' + esc(l.country) : ''}</option>`).join('')}</select>` : ''}
+    <input type="search" id="fxq" placeholder="Search team or league" value="${esc(N.q)}" style="margin:8px 0 10px">
     ${N.err ? `<div class="banner err">${esc(N.err)}</div>` : ''}
     ${N.fixtures === null ? '<div class="spinner"></div>' : `
       ${gs.map((g) => `<div class="league">${g.l.logo ? `<img class="crest" style="width:18px;height:18px" src="${esc(g.l.logo)}" alt="">` : ''}${esc(g.l.name)}<span class="muted small" style="text-transform:none">${esc(g.l.country || '')}</span></div>
         <div class="gap-s">${g.items.map((f) => `<button class="fx ${sel?.id === f.id ? 'on' : ''}" data-act="pickfx" data-id="${f.id}"><span class="t">${timeStr(f.kickoff)}</span><span class="tm"><div>${crest(f.teams.home)} ${esc(f.teams.home.name)}</div><div>${crest(f.teams.away)} ${esc(f.teams.away.name)}</div></span>${f.status.short !== 'NS' ? `<span class="pill">${esc(f.status.short)}</span>` : ''}</button>`).join('')}</div>`).join('')}
       ${!total ? `<p class="muted center">No matches found for this day${q ? ' and search' : ''}.</p>` : ''}
-      ${!q && !N.all && featuredCount && (N.fixtures.length > featuredCount) ? `<p class="center"><button class="ghost sm" data-act="showall">Show all ${N.fixtures.length} matches worldwide</button></p>` : ''}
+      ${!total && !q && !N.league && N.scope === 'mine' ? `<p class="center"><button class="ghost sm" data-act="scope" data-k="featured">Nothing from your favourites - show featured matches</button></p>` : ''}
       ${total > 120 ? `<p class="muted small center">Showing the first 120 of ${total} - search to narrow it down.</p>` : ''}`}
     ${sel ? `
     <div class="sec">2 · Who's playing?</div>
@@ -706,13 +745,17 @@ document.addEventListener('click', async (ev) => {
   const d = el.dataset;
   switch (act) {
     case 'home': return go('#/');
-    case 'settings': closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
+    case 'settings': await loadPrefs(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
     case 'closesettings': if (el.classList.contains('modal-back') && ev.target !== el) return; return closeModal();
     case 'theme': localStorage.setItem('statto_theme', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
     case 'accent': localStorage.setItem('statto_accent', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
     case 'loadsquads': ensureSquads(); return;
     case 'loadfootball': runFootballLoad(); return;
-    case 'logoff': closeModal(); await S.api.auth.signOut(); S.user = null; return go('#/');
+    case 'favkind': S.favKind = d.k; return refreshSettings();
+    case 'favadd': { const x = S.favRes?.[Number(d.i)]; if (!x) return; const P = S.prefs ||= { leagues: [], teams: [] }; const k = S.favKind === 'league' ? 'leagues' : 'teams';
+      if (!P[k].some((y) => y.id === x.id)) P[k] = [...P[k], { id: x.id, name: x.name, logo: x.logo || '' }]; return saveFavs(); }
+    case 'favdel': { const P = S.prefs; const k = d.kind === 'league' ? 'leagues' : 'teams'; P[k] = P[k].filter((y) => String(y.id) !== d.id); return saveFavs(); }
+    case 'logoff': closeModal(); await S.api.auth.signOut(); S.user = null; S.prefs = null; N.scope = null; N.league = null; return go('#/');
     case 'authmode': AUTH.mode = d.k; return viewWelcome();
     case 'signin': return doPassword(false);
     case 'signup': return doPassword(true);
@@ -724,7 +767,7 @@ document.addEventListener('click', async (ev) => {
     case 'dojoin': { const n = document.getElementById('jname').value.trim(); if (!n) return toast('Add your name'); S.user = await S.api.auth.setName(n).catch(() => S.user); return doJoin(d.code, n); }
     // new
     case 'date': N.date = d.d; N.sel = null; return loadFixtures();
-    case 'showall': N.all = true; return renderNew();
+    case 'scope': N.scope = d.k; N.league = null; N.sel = null; return renderNew();
     case 'pickfx': N.sel = N.fixtures.find((f) => String(f.id) === d.id); N.name = ''; renderNew(); return setTimeout(() => document.getElementById('sname')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
     case 'step': {
       if (d.k === 'lcpu') { const cur = V.data.members.filter((m) => m.kind === 'cpu').length; const nn = Math.max(1, Math.min(7, cur + Number(d.d))); if (nn !== cur) { await S.api.setMembers(V.id, cpuNames(nn).map((n) => ({ name: n, kind: 'cpu' }))); await refreshSweep(); renderSweep(); } return; }
@@ -765,6 +808,8 @@ document.addEventListener('change', (ev) => {
   if (d.act === 'awardon') { const t = d.s === 'n' ? N.awards : V.edit.awards; t[d.k].on = el.checked; d.s === 'n' ? renderNew() : renderSweep(); }
 });
 document.addEventListener('input', (ev) => {
+  if (ev.target.id === 'fxl') { N.league = Number(ev.target.value) || null; N.sel = null; return renderNew(); }
+  if (ev.target.id === 'favq') return favSearch(ev.target.value);
   if (ev.target.id === 'fxq') { N.q = ev.target.value; S.focusQ = true; clearTimeout(S.qt); S.qt = setTimeout(renderNew, 150); }
   if (ev.target.id === 'joincode') ev.target.value = ev.target.value.toUpperCase();
   if (ev.target.id === 'nnames') N.names = ev.target.value;

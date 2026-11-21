@@ -64,6 +64,9 @@ async function createNeonApi(cfg) {
       onChange(cb) { listeners.push(cb); },
     },
     listFixtures: async (date) => (await fn({ action: 'fixtures', date })).fixtures,
+    getPrefs: async () => { const p = must(await client.rpc('get_prefs')); return { leagues: p?.leagues || [], teams: p?.teams || [] }; },
+    savePrefs: async (leagues, teams) => must(await client.rpc('save_prefs', { p_leagues: leagues, p_teams: teams })),
+    searchFootball: async (kind, q) => (await fn({ action: 'search', kind, q })).results,
     getPool: (fx, force, squadOnly) => fn({ action: 'pool', fixtureId: fx.id, homeId: fx.teams.home.id, awayId: fx.teams.away.id, force, squadOnly: !!squadOnly }),
     getState: async (fixtureId, force) => (await fn({ action: 'state', fixtureId, force })).state,
     async createSweepstake({ name, displayName, fixture, rules, awards, drawConfig, members = [] }) {
@@ -201,6 +204,9 @@ function createDemoApi() {
       async signOut() { sessionStorage.removeItem('statto_demo_user'); listeners.forEach((f) => f(null)); },
       onChange(cb) { listeners.push(cb); },
     },
+    async getPrefs() { try { return JSON.parse(localStorage.getItem('statto_prefs')) || { leagues: [], teams: [] }; } catch { return { leagues: [], teams: [] }; } },
+    async savePrefs(leagues, teams) { localStorage.setItem('statto_prefs', JSON.stringify({ leagues, teams })); },
+    async searchFootball() { return []; },
     async listFixtures() {
       const { events, lineups, ...row } = demoState(db().matchStart);
       return [row];
