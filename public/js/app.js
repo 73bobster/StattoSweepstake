@@ -33,7 +33,7 @@ const MODES = {
 };
 /** Settings of a sweepstake, with defaults for games made before modes existed. */
 const cfgOf = (dc = {}) => ({ mode: 'friends', pick: 'random', limit: 'limited', lineup: 'auto', starters: 3, subs: 1, includeGK: false, ...dc });
-const LINEUP_TXT = { squad: 'Full squads (starting 11 + bench once line-ups are out)', xi: 'Starting XI (about 1 hr before kick-off)', auto: 'Line-ups if out, else squads' };
+const LINEUP_TXT = { squad: 'Full squads (starters + bench once line-ups are out)', xi: 'Starting line-ups (about 1 hr before the start)', auto: 'Line-ups if out, else squads' };
 function setAppearance(rules, on) { APPEARANCE_KEYS.forEach((k) => { if (rules[k]) rules[k].on = on; }); }
 const parseNames = (t) => [...new Set(String(t || '').split(/[\n,]/).map((x) => x.trim().slice(0, 30)).filter(Boolean))].slice(0, 11);
 
@@ -59,13 +59,14 @@ async function route() {
 }
 
 const THEMES = [['light', 'Light'], ['dark', 'Dark'], ['auto', 'Match my device']];
-const ACCENTS = [['Blue', '#2b4cdb', '#d8283c'], ['Red', '#c8102e', '#ffffff'], ['Green', '#1f6f43', '#ffffff'], ['Black & gold', '#16181d', '#f5c518'], ['Sky', '#3b8fe0', '#1b2a49'], ['Claret', '#7b1e3a', '#8fd0ea'], ['Orange', '#e8730c', '#16181d'], ['Navy', '#14274e', '#ffffff']];
+const ACCENTS = [['Blue', '#0047AB', '#FF0066'], ['Red', '#c8102e', '#ffffff'], ['Green', '#1f6f43', '#ffffff'], ['Black & gold', '#16181d', '#f5c518'], ['Sky', '#3b8fe0', '#1b2a49'], ['Claret', '#7b1e3a', '#8fd0ea'], ['Orange', '#e8730c', '#16181d'], ['Navy', '#14274e', '#ffffff']];
 function applyLook() {
   const t = localStorage.getItem('statto_theme') || 'light';
   const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   const [, a, b] = ACCENTS.find((x) => x[0] === (localStorage.getItem('statto_accent') || 'Blue')) || ACCENTS[0];
   document.documentElement.style.setProperty('--accent', a); document.documentElement.style.setProperty('--accent2', b);
+  document.documentElement.style.setProperty('--accent-text', dark && a === '#0047AB' ? '#6EA8FF' : a);
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', a);
 }
 
@@ -85,7 +86,7 @@ function shell(inner, opts = {}) {
   const nav = u ? navItems() : [];
   return `
     <div class="appbar"><div class="appbar-in">
-      <div class="logo" data-act="home">S</div>
+      <img class="logo" data-act="home" src="icons/crest-192.png" alt="Statto Sweepstake home">
       <div class="grow"><div class="eyebrow">Statto Sweepstake</div><div class="ttl">${esc(opts.title || 'My games')}</div>${opts.sub ? `<div class="sub">${esc(opts.sub)}</div>` : ''}</div>
       ${u ? `<button class="iconbtn" data-act="settings" aria-label="Settings">⚙︎</button>` : ''}
     </div></div>
@@ -205,7 +206,7 @@ function viewWelcome(joinCode) {
   const up = AUTH.mode === 'signup';
   $app.innerHTML = shell(`
     <div class="authwrap">
-      ${joining ? `<div class="banner info">You've been invited to a sweepstake (code <b>${esc(String(joining).toUpperCase())}</b>). Pick how you want to play.</div>` : `<div class="hero"><h1>Statto<br>Sweepstake</h1><p>Pick a match. We deal everyone a random, evenly-balanced set of players. Goals score, cards cost.</p></div>`}
+      ${joining ? `<div class="banner info">You've been invited to a sweepstake (code <b>${esc(String(joining).toUpperCase())}</b>). Pick how you want to play.</div>` : `<div class="hero"><h1>Statto<br>Sweepstake</h1><p>Pick a match. Players are dealt or drafted between you and your mates, and every score and card in the real match moves the table.</p></div>`}
       <div class="card stack">
         <div class="sec" style="margin-top:0">No account needed</div>
         <div><label class="lbl">Your name</label><input type="text" id="gname" maxlength="30" placeholder="e.g. Robbo" autocomplete="nickname"></div>
@@ -469,8 +470,8 @@ function waitTxt(fx = V.data?.sweep?.fixture, st = V.state) {
   if (hasStarted(st) || !fx?.kickoff) return '';
   const mins = Math.round((Date.parse(st?.kickoff || fx.kickoff) - Date.now()) / 60000);
   if (Number.isNaN(mins)) return 'Match not started yet';
-  if (mins > 0) return `Match not started yet · kick-off ${mins >= 120 ? 'in ' + Math.round(mins / 60) + ' hours' : mins >= 60 ? 'in about an hour' : 'in ' + mins + ' min'}`;
-  return mins > -3 ? 'Kick-off time - waiting for the first update' : 'Match due to start - waiting for the first update';
+  if (mins > 0) return `Match not started yet · starts ${mins >= 120 ? 'in ' + Math.round(mins / 60) + ' hours' : mins >= 60 ? 'in about an hour' : 'in ' + mins + ' min'}`;
+  return mins > -3 ? 'Start time - waiting for the first update' : 'Match due to start - waiting for the first update';
 }
 function matchHeader(fx, st) {
   const live = isLive(st), fin = isFinished(st), started = hasStarted(st);
