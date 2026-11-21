@@ -50,3 +50,12 @@ export function normState(f) {
   };
 }
 
+
+/** Remember when we first saw each event and the line-ups (clock time), carried over from the previously saved state. */
+export function stamp(prev, next, now = new Date().toISOString()) {
+  const k = (e) => `${e.x}|${e.e}|${e.type}|${e.pid}|${e.aid}`;
+  const old = new Map((prev?.events || []).map((e) => [k(e), e.at]));
+  next.events = (next.events || []).map((e) => ({ ...e, at: old.get(k(e)) || now }));
+  if (next.lineups) next.lineupsAt = prev?.lineupsAt || now;
+  return next;
+}

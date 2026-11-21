@@ -9,7 +9,7 @@
 //   node tools/poller.mjs
 // Or double-click tools/run-poller.bat. Leave the window open; Ctrl+C stops it.
 import { makeSql } from '../functions/_lib/neon.js';
-import { normState, finished, unescapeDeep } from '../functions/_lib/normalize.js';
+import { normState, finished, unescapeDeep, stamp } from '../functions/_lib/normalize.js';
 
 const key = process.env.API_FOOTBALL_KEY, dbUrl = process.env.DATABASE_URL;
 if (!key || !dbUrl) { console.error('Set API_FOOTBALL_KEY and DATABASE_URL first (see the top of this file).'); process.exit(1); }
@@ -47,7 +47,8 @@ async function cycle() {
   for (let i = 0; i < ids.length; i += 20) {
     const resp = await api(`/fixtures?ids=${ids.slice(i, i + 20).join('-')}`);
     for (const f of resp) {
-      const st = normState(f), json = JSON.stringify(st);
+      const prevRow = (await sql('select state::text as state from fixture_state where fixture_id = $1', [f.fixture.id]))[0];
+      const st = stamp(prevRow ? JSON.parse(prevRow.state) : null, normState(f)), json = JSON.stringify(st);
       await sql("insert into api_cache(key, payload, fetched_at) values ($1, $2::jsonb, now()) on conflict (key) do update set payload = excluded.payload, fetched_at = now()", [`state:${st.id}`, json]);
       await sql("insert into fixture_state(fixture_id, state, updated_at) values ($1, $2::jsonb, now()) on conflict (fixture_id) do update set state = excluded.state, updated_at = now()", [st.id, json]);
       if (!st.lineups && (!st.status.short || st.status.short === 'NS') && !haveLineups.has(st.id)) {

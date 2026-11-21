@@ -716,15 +716,29 @@ function teams(res, members, picks, sweep) {
 }
 
 function feed(res, members, sweep, st) {
-  const items = res.feed.slice().reverse();
-  const icon = { goal: '⚽', penalty: '⚽', ownGoal: '😬', penMissed: '❌', yellow: '🟨', red: '🟥' };
+  const icon = { goal: '⚽', penalty: '⚽', ownGoal: '😬', penMissed: '❌', yellow: '🟨', red: '🟥', sub: '🔁' };
   const lbl = { goal: 'Goal', penalty: 'Penalty', ownGoal: 'Own goal', penMissed: 'Penalty missed', yellow: 'Yellow card', red: 'Red card' };
-  const when = V.stateErr ? '' : st ? `<p class="small muted center">Shared live feed · refreshes about every 5 minutes (free API plan)</p>` : '';
-  return when + `<div class="card">${items.map((e) => {
+  const picks = V.data.picks || [];
+  const ownerName = (pid) => { const pk = picks.find((p) => p.playerId === pid); return pk ? members.find((m) => m.id === pk.memberId)?.name : null; };
+  // scoring events + substitutions, in match order (substitutions: the API gives the player going off as the player and the one coming on as the assist)
+  const subs = (st?.events || []).filter((e) => e.type === 'subst').map((e) => ({ ...e, kind: 'sub', minute: e.x != null ? `${e.x}${e.e ? '+' + e.e : ''}'` : '' }));
+  const atOf = (e) => { const t = e.at && new Date(e.at); return t && !isNaN(t) ? t.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''; };
+  const items = [...res.feed, ...subs].sort((a, b) => (a.x ?? 0) - (b.x ?? 0) || (a.e ?? 0) - (b.e ?? 0)).reverse();
+  const lu = st?.lineups && st.lineups.home && st.lineups.away ? st.lineups : null;
+  const when = V.stateErr ? '' : st ? `<p class="small muted center">Shared live feed · updates about every minute while a match is on</p>` : '';
+  const rows = items.map((e) => {
+    if (e.kind === 'sub') {
+      const on = ownerName(e.aid), off = ownerName(e.pid);
+      return `<div class="ev"><div class="min">${esc(e.minute)}${atOf(e) ? `<div class="small muted">${atOf(e)}</div>` : ''}</div><div>${icon.sub}</div><div><b>${esc(e.aname || '')}</b> <span class="muted">on for</span> <b>${esc(e.pname || '')}</b>
+      <div class="small muted">${[on && `${esc(on)}’s player on`, off && `${esc(off)}’s player off`].filter(Boolean).join(' · ') || 'Nobody’s players'}</div></div></div>`;
+    }
     const o = members.find((m) => m.id === e.ownerMemberId); const pts = sweep.rules[e.kind];
-    return `<div class="ev"><div class="min">${esc(e.minute)}</div><div>${icon[e.kind]}</div><div><b>${esc(e.pname || '')}</b> <span class="muted">${lbl[e.kind]}</span>
+    return `<div class="ev"><div class="min">${esc(e.minute)}${atOf(e) ? `<div class="small muted">${atOf(e)}</div>` : ''}</div><div>${icon[e.kind]}</div><div><b>${esc(e.pname || '')}</b> <span class="muted">${lbl[e.kind]}</span>
       <div class="small ${o ? '' : 'muted'}">${o ? `${esc(o.name)}’s player <span class="${pts?.points >= 0 ? 'p-pos' : 'p-neg'}">${fmtPts(pts?.on ? pts.points : 0)}</span>` : 'Nobody’s player'}${e.aname && e.kind === 'goal' ? ` · assist ${esc(e.aname)}` : ''}</div></div></div>`;
-  }).join('') || `<p class="muted center">${esc(waitTxt(sweep.fixture, st) || 'No goals or cards yet. Events appear here as they happen.')}</p>`}</div>
+  });
+  if (lu) rows.push(`<div class="ev"><div class="min">${atOf({ at: st.lineupsAt }) ? `<span class="small muted">${atOf({ at: st.lineupsAt })}</span>` : '–'}</div><div>📋</div><div><b>Line-ups announced</b>
+    <div class="small muted">${esc(sweep.fixture.teams.home.name)}${lu.home.formation ? ' (' + esc(lu.home.formation) + ')' : ''} · ${esc(sweep.fixture.teams.away.name)}${lu.away.formation ? ' (' + esc(lu.away.formation) + ')' : ''}</div></div></div>`);
+  return when + `<div class="card">${rows.join('') || `<p class="muted center">${esc(waitTxt(sweep.fixture, st) || 'No goals or cards yet. Events appear here as they happen.')}</p>`}</div>
   <div class="center" style="margin-top:12px"><button class="ghost sm" data-act="refresh">↻ Refresh now</button></div>`;
 }
 

@@ -9,7 +9,7 @@
 import { verifyJwt } from '../_lib/jwt.js';
 import { makeSql } from '../_lib/neon.js';
 import * as fd from '../_lib/footballdata.js';
-import { ROLE, finished, normFixtureRow, normLineups, normState, unescapeDeep } from '../_lib/normalize.js';
+import { stamp, ROLE, finished, normFixtureRow, normLineups, normState, unescapeDeep } from '../_lib/normalize.js';
 
 const API = 'https://v3.football.api-sports.io';
 const DAILY_BUDGET = 95; // stop before the 100/day free limit
@@ -217,7 +217,7 @@ export async function onRequestPost({ request, env }) {
       const r = await cached(`state:${id}`, ttl, async () => {
         const resp = await call(`/fixtures?id=${id}`);
         if (!resp?.length) throw new Error('Fixture not found');
-        return normState(resp[0]);
+        return stamp(prev, normState(resp[0]));
       }, force);
       if (r.fresh) await sql('insert into fixture_state(fixture_id, state, updated_at) values ($1, $2::jsonb, now()) on conflict (fixture_id) do update set state = excluded.state, updated_at = now()', [id, JSON.stringify(r.data)]);
       return json({ state: r.data, fetchedAt: r.fetchedAt, via: pollerAlive && !r.fresh ? 'poller' : 'direct' });
