@@ -98,6 +98,7 @@ async function createNeonApi(cfg) {
       must(await client.rpc('save_draw', { p_sweepstake: id, p_picks: picks.map((p) => ({ member_id: p.memberId, player_id: p.playerId, player_name: p.playerName, number: p.number, photo: p.photo, side: p.side, team_id: p.teamId, role: p.role, slot: p.slot })) }));
     },
     reopen: async (id) => must(await client.rpc('reopen_draw', { p_sweepstake: id })),
+    deleteSweep: async (id) => must(await client.rpc('delete_sweepstake', { p_sweepstake: id })),
     updateRules: async (id, rules, awards) => must(await client.rpc('update_rules', { p_sweepstake: id, p_rules: rules, p_awards: awards })),
     // Friends see joins, the draw and match events within a few seconds (cheap polling of the shared tables).
     subscribe(sweepId, fixtureId, onChange) {
@@ -253,6 +254,7 @@ function createDemoApi() {
       d.sweeps.find((s) => s.id === id).status = 'drawn'; write(d);
     },
     async reopen(id) { const d = db(); d.picks = d.picks.filter((p) => p.sweepId !== id); const s = d.sweeps.find((x) => x.id === id); s.status = 'setup'; s.pool = null; write(d); },
+    async deleteSweep(id) { const d = db(); d.sweeps = d.sweeps.filter((s) => s.id !== id); d.members = d.members.filter((m) => m.sweepId !== id); d.picks = d.picks.filter((p) => p.sweepId !== id); write(d); },
     async updateRules(id, rules, awards) { const d = db(); const s = d.sweeps.find((x) => x.id === id); s.rules = rules; s.awards = awards; write(d); },
     subscribe(sweepId, fixtureId, onChange) {
       const h = () => onChange('sweep');

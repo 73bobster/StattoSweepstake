@@ -222,7 +222,7 @@ async function viewHome() {
     <div class="sec">${mine.length ? 'Your sweepstakes' : ''}</div>
     <div class="stack">${mine.map((s) => `
       <div class="card" data-act="open" data-id="${s.id}" style="cursor:pointer">
-        <div class="row between"><b>${esc(s.name)}</b><span class="pill">${s.status === 'setup' ? 'Lobby' : s.status === 'drafting' ? 'Drafting' : 'Drawn'}</span></div>
+        <div class="row between"><b>${esc(s.name)}</b><span class="row" style="gap:6px"><span class="pill">${s.status === 'setup' ? 'Lobby' : s.status === 'drafting' ? 'Drafting' : 'Drawn'}</span>${s.isHost ? `<button class="ghost sm" data-act="delsweep" data-id="${s.id}" title="Delete" aria-label="Delete sweepstake">🗑</button>` : ''}</span></div>
         <div class="row muted small" style="margin-top:6px">${crest(s.fixture.teams.home)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? ' v ' : ` ${esc(s.fixture.teams.home.name)} v `}${crest(s.fixture.teams.away)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? '' : ` ${esc(s.fixture.teams.away.name)}`}</div>
         <div class="small muted" style="margin-top:4px">${dayStr(s.fixture.kickoff)} · ${timeStr(s.fixture.kickoff)}${s.isHost ? ' · you are the host' : ''}</div>
       </div>`).join('') || '<p class="muted center">Nothing yet. Start one and invite your mates.</p>'}</div>`, { title: 'My games', sub: 'Your sweepstakes' });
@@ -682,7 +682,8 @@ function rulesTab(sweep, isHost, st) {
     <div class="card" style="margin-top:10px">${Object.values(awards).map((a) => `<div class="award"><span class="${a.on ? '' : 'muted'}">${esc(a.label)}</span><span class="w muted">${a.on ? 'on' : 'off'}</span></div>`).join('')}</div>`}
     ${isHost ? `<div class="stack" style="margin-top:14px">
       ${editing ? `<button class="block" data-act="saverules">Save scoring</button><button class="ghost block" data-act="cancelrules">Cancel</button>` : `<button class="soft block" data-act="editrules">Edit scoring</button>`}
-      ${!locked && !editing ? `<button class="danger block" data-act="reopen">Reopen the draw (redraw players)</button>` : ''}</div>` : '<p class="small muted center" style="margin-top:12px">Only the host can change the scoring.</p>'}`;
+      ${!locked && !editing ? `<button class="danger block" data-act="reopen">Reopen the draw (redraw players)</button>` : ''}
+      ${!editing ? `<button class="danger block" data-act="delsweep" data-id="${V.id}" style="margin-top:8px">Delete this sweepstake</button>` : ''}</div>` : '<p class="small muted center" style="margin-top:12px">Only the host can change the scoring.</p>'}`;
 }
 
 // ------------------------------------------------------------------ events (delegation)
@@ -740,6 +741,8 @@ document.addEventListener('click', async (ev) => {
     case 'editrules': V.edit = { rules: clone(V.data.sweep.rules), awards: clone(V.data.sweep.awards) }; return renderSweep();
     case 'cancelrules': V.edit = null; return renderSweep();
     case 'saverules': await S.api.updateRules(V.id, V.edit.rules, V.edit.awards); V.edit = null; await refreshSweep(); toast('Scoring updated'); return renderSweep();
+    case 'delsweep': if (confirm('Delete this sweepstake for everyone? The players, points and invite code are removed and it can’t be undone.')) {
+      try { await S.api.deleteSweep(d.id); toast('Sweepstake deleted'); if (location.hash.startsWith('#/s/')) go('#/'); else viewHome(); } catch (e) { toast(e.message); } } return;
     case 'reopen': if (confirm('Reopen the draw? Everyone’s players will be cleared and you can redraw.')) { await S.api.reopen(V.id); await refreshSweep(); renderSweep(); } return;
   }
 });
