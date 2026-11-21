@@ -175,7 +175,7 @@ export async function onRequestPost({ request, env }) {
       let players, source;
       if (lineups) {
         source = 'lineups';
-        players = ['home', 'away'].flatMap((side) => lineups[side].players.map((p) => ({ ...p, side, teamId: side === 'home' ? home : away })));
+        players = ['home', 'away'].flatMap((side) => lineups[side].players.filter((p) => p.id).map((p) => ({ ...p, side, teamId: side === 'home' ? home : away })));
       } else {
         source = 'squads';
         players = [];

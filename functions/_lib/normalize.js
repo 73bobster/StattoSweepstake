@@ -21,8 +21,10 @@ export const normFixtureRow = (f) => ({
 export function normLineups(lineups, homeId) {
   if (!lineups?.length) return null;
   const out = {};
-  for (const l of lineups) {
+  for (let l of lineups) {
     const side = l.team.id === homeId ? 'home' : 'away';
+    // the API sometimes lists a player (e.g. a youth call-up) with no id - they cannot be dealt or scored, so leave them out
+    l = { ...l, startXI: (l.startXI || []).filter((p) => p.player?.id), substitutes: (l.substitutes || []).filter((p) => p.player?.id) };
     out[side] = {
       formation: l.formation,
       coach: l.coach?.name,
