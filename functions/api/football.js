@@ -199,7 +199,7 @@ export async function onRequestPost({ request, env }) {
       let excluded = [], injuriesError = null;
       if (source === 'squads') {
         try {
-          const inj = await cached(`injuries:${id}`, 3 * 3600, () => call(`/injuries?fixture=${id}`), !!body.force);
+          const inj = await cached(`injuries:${id}`, 3 * 3600, () => call(`/injuries?fixture=${id}`)); // shared for 3 hours, never forced
           const out = new Map((inj.data || []).filter((i) => i.player?.type === 'Missing Fixture').map((i) => [i.player.id, i.player.reason || 'Injured']));
           excluded = players.filter((p) => out.has(p.id)).map((p) => ({ id: p.id, name: p.name, reason: out.get(p.id) }));
           players = players.filter((p) => !out.has(p.id));

@@ -506,7 +506,7 @@ async function fetchPool(sweep) {
   const mins = (Date.parse(sweep.fixture.kickoff) - Date.now()) / 60000;
   const soon = !Number.isNaN(mins) && mins <= 90;   // line-ups usually appear about an hour before kick-off: look for them
   const mustHave = dc.lineup === 'xi' || (!Number.isNaN(mins) && mins <= 45); // in the last 45 minutes nobody outside XI + bench is dealt
-  const res = await S.api.getPool(sweep.fixture, true, dc.lineup === 'squad' && !soon);
+  const res = await S.api.getPool(sweep.fixture, mustHave, dc.lineup === 'squad' && !soon); // only force a fresh look-up in the last 45 min
   if (mustHave && res.source !== 'lineups') throw new Error(dc.lineup === 'xi' ? 'The line-ups aren’t out yet - they usually land about an hour before kick-off. Try again then, or switch to full squads.' : 'Line-ups aren’t out yet and kick-off is close. Try again in a few minutes - only the starting 11 and bench are dealt now.');
   return res;
 }
