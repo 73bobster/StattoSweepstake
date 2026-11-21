@@ -83,8 +83,12 @@ async function createNeonApi(cfg) {
     },
     join: async (code, name) => must(await client.rpc('join_sweepstake', { p_code: code, p_display_name: name })),
     async listMine() {
-      const rows = must(await client.from('members').select('sweepstake_id, is_host, sweepstakes(id,code,name,creator_id,fixture_id,fixture,rules,awards,draw_config,status,created_at)').order('joined_at', { ascending: false }));
-      return rows.filter((r) => r.sweepstakes).map((r) => ({ ...mapSweep(r.sweepstakes), isHost: r.is_host }));
+      // RLS lets us see every member of our games, so only keep OUR membership rows - otherwise a game shows once per player in it.
+      const me = (await api.auth.getUser())?.id;
+      const rows = must(await client.from('members').select('sweepstake_id, is_host, user_id, sweepstakes(id,code,name,creator_id,fixture_id,fixture,rules,awards,draw_config,status,created_at)').order('joined_at', { ascending: false }));
+      const mine = new Map();
+      for (const r of rows) if (r.sweepstakes && r.user_id === me && !mine.has(r.sweepstake_id)) mine.set(r.sweepstake_id, { ...mapSweep(r.sweepstakes), isHost: r.is_host });
+      return [...mine.values()];
     },
     async load(id) {
       const [s, m, p] = await Promise.all([
