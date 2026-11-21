@@ -19,6 +19,7 @@ const sql = makeSql(dbUrl);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (m) => console.log(`${new Date().toLocaleTimeString('en-GB')}  ${m}`);
 let stop = false, backoff = 0;
+const haveLineups = new Set();
 process.on('SIGINT', () => { stop = true; log('Stopping after this cycle…'); });
 
 const DONE = "('FT','AET','PEN','CANC','PST','ABD','AWD','WO','SUSP')";
@@ -49,6 +50,13 @@ async function cycle() {
       const st = normState(f), json = JSON.stringify(st);
       await sql("insert into api_cache(key, payload, fetched_at) values ($1, $2::jsonb, now()) on conflict (key) do update set payload = excluded.payload, fetched_at = now()", [`state:${st.id}`, json]);
       await sql("insert into fixture_state(fixture_id, state, updated_at) values ($1, $2::jsonb, now()) on conflict (fixture_id) do update set state = excluded.state, updated_at = now()", [st.id, json]);
+      if (!st.lineups && (!st.status.short || st.status.short === 'NS') && !haveLineups.has(st.id)) {
+        // line-ups: look every minute from 90 min before kick-off until they are published, then save them for the Deal
+        try {
+          const lu = await api(`/fixtures/lineups?fixture=${st.id}`);
+          if (lu.length >= 2) { haveLineups.add(st.id); await sql("insert into api_cache(key, payload, fetched_at) values ($1, $2::jsonb, now()) on conflict (key) do update set payload = excluded.payload, fetched_at = now()", [`lineups:${st.id}`, JSON.stringify(lu)]); log(`  line-ups are out for ${st.teams.home.name} v ${st.teams.away.name} - saved.`); }
+        } catch (e) { log(`  line-up check: ${e.message}`); }
+      }
       saved++; log(`  ${st.teams.home.name} ${st.goals?.home ?? '-'}-${st.goals?.away ?? '-'} ${st.teams.away.name}  [${st.status.short}${st.status.elapsed ? ' ' + st.status.elapsed + "'" : ''}]${finished(st.status.short) ? ' full time' : ''}`);
     }
   }
