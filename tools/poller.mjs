@@ -9,7 +9,7 @@
 //   node tools/poller.mjs
 // Or double-click tools/run-poller.bat. Leave the window open; Ctrl+C stops it.
 import { makeSql } from '../functions/_lib/neon.js';
-import { normState, finished, unescapeDeep, stamp } from '../functions/_lib/normalize.js';
+import { normState, normFixtureRow, finished, unescapeDeep, stamp } from '../functions/_lib/normalize.js';
 
 const key = process.env.API_FOOTBALL_KEY, dbUrl = process.env.DATABASE_URL;
 if (!key || !dbUrl) { console.error('Set API_FOOTBALL_KEY and DATABASE_URL first (see the top of this file).'); process.exit(1); }
@@ -39,7 +39,21 @@ async function api(path) {
 }
 const beat = () => sql("insert into api_cache(key, payload, fetched_at) values ('poller:heartbeat', '{}'::jsonb, now()) on conflict (key) do update set fetched_at = now()");
 
+// The match list for the "New sweepstake" screen: fetched from here (your home IP) so the website never has to ask API-Football for it.
+// Today is refreshed every 20 minutes, the next 7 days every 2 hours (the website treats them as fresh for 30 minutes / 3 hours).
+const listAt = new Map();
+async function refreshLists() {
+  for (let i = 0; i < 8; i++) {
+    const date = new Date(Date.now() + i * 86400e3).toISOString().slice(0, 10);
+    if (Date.now() - (listAt.get(date) || 0) < (i === 0 ? 20 : 120) * 60e3) continue;
+    const rows = (await api(`/fixtures?date=${date}&timezone=Europe/London`)).map(normFixtureRow);
+    await sql("insert into api_cache(key, payload, fetched_at) values ($1, $2::jsonb, now()) on conflict (key) do update set payload = excluded.payload, fetched_at = now()", [`fixtures:${date}`, JSON.stringify(rows)]);
+    listAt.set(date, Date.now()); log(`  match list for ${date}: ${rows.length} matches saved.`);
+  }
+}
+
 async function cycle() {
+  try { await refreshLists(); } catch (e) { log(`  match list: ${e.message}`); }
   const ids = await activeFixtures();
   if (!ids.length) { await beat(); return log('No active matches - idle (no API calls).'); }
   let saved = 0;
