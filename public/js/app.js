@@ -113,17 +113,26 @@ async function runFootballLoad() {
   if (S.ff?.running) return;
   const say = (msg) => { S.ff.msg = msg; const el = document.getElementById('ffmsg'); if (el) el.textContent = msg; };
   S.ff = { running: true, msg: 'Planning…' }; refreshSettings();
+  // One step, retried if API-Football says "slow down" (waits out the minute, then carries on).
+  const step = async (o) => {
+    for (let tries = 0; ; tries++) {
+      try { return await S.api.ffStep(o); } catch (e) {
+        if (!/per-minute limit/i.test(e.message) || tries >= 6) throw e;
+        const base = S.ff.msg; for (let s = 65; s > 0; s -= 5) { say(`API limit hit - waiting ${s}s, then carrying on (${base})`); await wait(5000); } say(base);
+      }
+    }
+  };
   try {
     const plan = await S.api.ffPlan();
-    for (const l of plan.leagues) { say(`Setting up ${FF_LEAGUES[l]}`); await S.api.ffStep({ step: 'league', league: l }); }
+    for (const l of plan.leagues) { say(`Setting up ${FF_LEAGUES[l]}`); await step({ step: 'league', league: l }); }
     for (const t of plan.todo) {
       const lbl = `${FF_LEAGUES[t.league]} ${t.season}/${String(t.season + 1).slice(2)}`;
-      say(`${lbl}: clubs`); await S.api.ffStep({ step: 'teams', ...t });
+      say(`${lbl}: clubs`); await step({ step: 'teams', ...t });
       let page = 1, total = 1;
-      while (page <= total) { say(`${lbl}: players ${page}/${total}`); const r = await S.api.ffStep({ step: 'players', ...t, page }); total = r.total; page++; }
+      while (page <= total) { say(`${lbl}: players ${page}/${total}`); const r = await step({ step: 'players', ...t, page }); total = r.total; page++; }
     }
     const p2 = await S.api.ffPlan();
-    let n = 0; for (const team of p2.numbers) { say(`Shirt numbers ${++n}/${p2.numbers.length}`); await S.api.ffStep({ step: 'numbers', team }); }
+    let n = 0; for (const team of p2.numbers) { say(`Shirt numbers ${++n}/${p2.numbers.length}`); await step({ step: 'numbers', team }); }
     const c = (await S.api.ffPlan()).counts;
     S.ff = { done: true, msg: `Done: ${c.players} players, ${c.clubs} clubs, ${c.stats} season records.` };
   } catch (e) { S.ff = { err: e.message, msg: S.ff?.msg }; }
