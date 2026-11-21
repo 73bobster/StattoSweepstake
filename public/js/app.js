@@ -261,12 +261,13 @@ async function viewJoin(code) {
     // The draw is done: someone the host dealt in (or who was dealt in randomly) can claim their own spot and see their players.
     const mine = (await S.api.listMine().catch(() => [])).find((x) => x.id === prev.id);
     if (mine) return go('#/s/' + prev.id);
-    const spots = await S.api.claimable(code).catch(() => []);
+    let spots = [], spotErr = '';
+    try { spots = await S.api.claimable(code); } catch (e) { spotErr = e.message; }
     return void ($app.innerHTML = shell(spots.length ? `
       <div class="card stack"><div><b>${esc(prev.name)}</b><div class="small muted">${esc(prev.fixture.teams.home.name)} v ${esc(prev.fixture.teams.away.name)} · players already dealt</div></div>
       <div class="small muted">Which one are you? You'll see your own players and score on your own phone.</div>
       ${spots.map((m) => `<button class="soft block" data-act="claim" data-code="${code}" data-id="${m.id}" style="text-align:left"><b>${esc(m.name)}</b> <span class="muted small">· ${m.pickCount} player${m.pickCount === 1 ? '' : 's'}</span></button>`).join('')}</div>`
-      : `<div class="banner err">The players have already been dealt and there's no spare spot to claim. Ask the host to reopen the draw if you should be in.</div><p><button class="ghost" data-act="home">Back</button></p>`, { title: "You're invited" }));
+      : `<div class="banner err">${spotErr ? 'Couldn\u2019t check the spots: ' + esc(spotErr) : 'The players have already been dealt and there\u2019s no spare spot to claim.'} Ask the host to reopen the draw if you should be in.</div><p><button class="ghost" data-act="home">Back</button></p>`, { title: "You're invited" }));
   }
   const pre = (S.user.name || '').trim();
   if (pre) return doJoin(code, pre);
