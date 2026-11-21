@@ -69,6 +69,8 @@ async function createNeonApi(cfg) {
     async createSweepstake({ name, displayName, fixture, rules, awards, drawConfig, members = [] }) {
       return mapSweep(must(await client.rpc('create_sweepstake', { p_name: name, p_display_name: displayName, p_fixture_id: fixture.id, p_fixture: fixture, p_rules: rules, p_awards: awards, p_draw_config: drawConfig, p_members: members })));
     },
+    squadStatus: () => fn({ action: 'squadStatus' }),
+    seedSquads: () => fn({ action: 'seedSquads' }),
     updateSetup: async (id, drawConfig, rules) => must(await client.rpc('update_setup', { p_sweepstake: id, p_draw_config: drawConfig, p_rules: rules })),
     setMembers: async (id, members) => must(await client.rpc('set_virtual_members', { p_sweepstake: id, p_members: members })),
     startDraft: async (id, order, pool, each) => must(await client.rpc('start_draft', { p_sweepstake: id, p_order: order, p_pool: pool, p_each: each })),
@@ -207,6 +209,8 @@ function createDemoApi() {
       members.filter((m) => (m.name || '').trim()).forEach((m) => d.members.push({ id: uid(), sweepId: s.id, userId: 'v:' + uid(), name: m.name.trim().slice(0, 30), isHost: false, kind: m.kind === 'cpu' ? 'cpu' : 'local' }));
       write(d); return s;
     },
+    async squadStatus() { return { leagues: [], complete: true }; },
+    async seedSquads() { return { leagues: [], complete: true }; },
     async updateSetup(id, drawConfig, rules) { const d = db(); const s = d.sweeps.find((x) => x.id === id); s.drawConfig = drawConfig; s.rules = rules; write(d); },
     async setMembers(id, members) {
       const d = db(); d.members = d.members.filter((m) => !(m.sweepId === id && m.kind && m.kind !== 'user'));

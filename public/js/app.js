@@ -98,6 +98,33 @@ function shell(inner, opts = {}) {
     </div>`;
 }
 
+function squadsSection() {
+  const st = S.squadStatus;
+  const rows = st?.leagues?.length ? st.leagues.map((l) => `<div class="kv"><span>${esc(l.name)}</span><b>${l.loaded}/${l.expected}</b></div>`).join('') : '<div class="small muted">Checking…</div>';
+  return `<div class="sec">Player squads</div>
+    <div class="card flat">${rows}
+      <div class="small muted" style="margin-top:6px">${st?.complete ? 'All squads are stored. Games deal players from here, with no live look-ups.' : S.seeding ? 'Loading squads in the background (a few every minute). Keep the app open.' : S.squadErr ? esc(S.squadErr) : 'Squads are stored once and reused. The free data plan limits how many we can fetch per day, so this finishes over a day or two.'}</div>
+      ${!st?.complete && !S.seeding ? `<button class="soft block" data-act="loadsquads" style="margin-top:8px">Load squads now</button>` : ''}</div>`;
+}
+function refreshSettings() { if (document.querySelector('.modal-back')) { closeModal(); document.body.insertAdjacentHTML('beforeend', settingsModal()); } }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Keep our own copy of the squads topped up (Premier League, Championship, Scottish Premiership and Championship). */
+async function ensureSquads() {
+  if (S.api.mode !== 'neon' || S.seeding || !S.user) return;
+  try {
+    S.squadErr = '';
+    let st = await S.api.squadStatus(); S.squadStatus = st; refreshSettings();
+    if (st.complete) return;
+    S.seeding = true; refreshSettings();
+    for (let i = 0; i < 40 && S.user; i++) {
+      st = await S.api.seedSquads(); S.squadStatus = st; refreshSettings();
+      if (st.complete) break;
+      if (st.paused) { S.squadErr = st.paused === 'budget' ? 'Paused for today to save the free data allowance - it carries on tomorrow.' : st.paused; break; }
+      if (st.busy) await wait(30000);
+    }
+  } catch (e) { S.squadErr = e.message; } finally { S.seeding = false; refreshSettings(); }
+}
+
 function settingsModal() {
   const u = S.user; const t = localStorage.getItem('statto_theme') || 'light'; const ac = localStorage.getItem('statto_accent') || 'Blue';
   return `<div class="modal-back" data-act="closesettings"><div class="modal">
@@ -105,6 +132,7 @@ function settingsModal() {
     <div class="sec">Appearance</div>
     <div class="small muted">Theme</div><div class="chips" style="flex-wrap:wrap">${THEMES.map(([k, l]) => `<div class="chip ${t === k ? 'on' : ''}" data-act="theme" data-k="${k}">${l}</div>`).join('')}</div>
     <div class="small muted" style="margin-top:10px">App colour</div><div class="chips" style="flex-wrap:wrap">${ACCENTS.map(([n, a, b]) => `<div class="swatch ${ac === n ? 'on' : ''}" title="${n}" data-act="accent" data-k="${n}" style="background:linear-gradient(135deg,${a} 50%,${b} 50%)"></div>`).join('')}</div>
+    ${S.api.mode === 'neon' ? squadsSection() : ''}
     <div class="sec">Account</div>
     <div class="card flat"><div class="kv"><span>Signed in as</span><b>${esc(u.name || '—')}</b></div><div class="kv"><span>Email</span><b>${u.guest ? 'Guest (no email)' : esc(u.email || '')}</b></div></div>
     ${u.guest ? `<p class="small muted">You're playing as a guest on this device. Create an account from the sign-in page to keep your games on every device.</p>` : ''}
@@ -597,7 +625,7 @@ function feed(res, members, sweep, st) {
   const items = res.feed.slice().reverse();
   const icon = { goal: '⚽', penalty: '⚽', ownGoal: '😬', penMissed: '❌', yellow: '🟨', red: '🟥' };
   const lbl = { goal: 'Goal', penalty: 'Penalty', ownGoal: 'Own goal', penMissed: 'Penalty missed', yellow: 'Yellow card', red: 'Red card' };
-  const when = V.stateErr ? '' : st ? `<p class="small muted center">Shared live feed · refreshes about every 2 minutes (free API plan)</p>` : '';
+  const when = V.stateErr ? '' : st ? `<p class="small muted center">Shared live feed · refreshes about every 5 minutes (free API plan)</p>` : '';
   return when + `<div class="card">${items.map((e) => {
     const o = members.find((m) => m.id === e.ownerMemberId); const pts = sweep.rules[e.kind];
     return `<div class="ev"><div class="min">${esc(e.minute)}</div><div>${icon[e.kind]}</div><div><b>${esc(e.pname || '')}</b> <span class="muted">${lbl[e.kind]}</span>
@@ -629,6 +657,7 @@ document.addEventListener('click', async (ev) => {
     case 'closesettings': if (el.classList.contains('modal-back') && ev.target !== el) return; return closeModal();
     case 'theme': localStorage.setItem('statto_theme', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
     case 'accent': localStorage.setItem('statto_accent', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
+    case 'loadsquads': ensureSquads(); return;
     case 'logoff': closeModal(); await S.api.auth.signOut(); S.user = null; return go('#/');
     case 'authmode': AUTH.mode = d.k; return viewWelcome();
     case 'signin': return doPassword(false);
@@ -696,7 +725,8 @@ function closeModal() { document.querySelector('.modal-back')?.remove(); }
   applyLook(); matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', applyLook);
   S.api = await createApi(window.STATTO_CONFIG || {});
   S.user = await S.api.auth.getUser();
-  S.api.auth.onChange((u) => { const had = !!S.user; S.user = u; if (!!u !== had) route(); });
+  S.api.auth.onChange((u) => { const had = !!S.user; S.user = u; if (!!u !== had) route(); if (u && !had) ensureSquads(); });
   window.addEventListener('hashchange', route);
   route();
+  if (S.user) setTimeout(ensureSquads, 1500);
 })();

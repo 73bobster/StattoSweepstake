@@ -1,6 +1,8 @@
 // Cloudflare Pages Function: POST /api/football
 // The ONLY place the API-Football key lives. Browsers call this, never api-sports directly.
 // Results are cached in Neon so all friends share the same few API calls (free plan = 100 calls/day).
+// Squads are NOT fetched per game: they live in our own `squads` table (see seedSquads). The API is used only for
+// fixtures (what's on), line-ups and live match events (polled at most every 5 minutes for everyone together).
 //
 // Secrets (Cloudflare Pages > Settings > Variables and Secrets): DATABASE_URL, API_FOOTBALL_KEY
 // Plain variable (wrangler.toml): NEON_JWKS_URL
@@ -9,6 +11,11 @@ import { makeSql } from '../_lib/neon.js';
 
 const API = 'https://v3.football.api-sports.io';
 const DAILY_BUDGET = 95; // stop before the 100/day free limit
+const SEED_BUDGET = 70; // squad seeding never uses the last ~25 calls of the day - those are for fixtures and live matches
+// Leagues whose squads we keep in our own database: Premier League, Championship, Scottish Premiership, Scottish Championship
+const LEAGUES = { 39: { name: 'Premier League', teams: 20 }, 40: { name: 'Championship', teams: 24 }, 179: { name: 'Scottish Premiership', teams: 12 }, 180: { name: 'Scottish Championship', teams: 10 } };
+const SQUAD_MAX_AGE_DAYS = 30;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 
@@ -90,6 +97,73 @@ export async function onRequestPost({ request, env }) {
       }
     }
 
+    const normSquad = (resp) => (resp?.[0]?.players || []).map((p) => ({ id: p.id, name: p.name, number: p.number ?? null, photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`, role: ROLE[p.position] || 'MID' }));
+
+    /** A team's squad from our own database; only if we've never stored it do we ask the API (and then keep it). */
+    async function squadFor(teamId) {
+      const row = (await sql('select players::text as players from squads where team_id = $1 and players is not null', [teamId]))[0];
+      if (row) return JSON.parse(row.players);
+      const players = normSquad(await call(`/players/squads?team=${teamId}`));
+      await sql('insert into squads(team_id, players, fetched_at) values ($1, $2::jsonb, now()) on conflict (team_id) do update set players = excluded.players, fetched_at = now()', [teamId, JSON.stringify(players)]);
+      return players;
+    }
+
+    async function squadStatus() {
+      const rows = await sql('select league_id::text as league_id, count(*)::text as teams, count(players)::text as loaded, count(*) filter (where players is not null and fetched_at < now() - ($1 || \' days\')::interval)::text as stale from squads where league_id is not null group by league_id', [String(SQUAD_MAX_AGE_DAYS)]);
+      const by = Object.fromEntries(rows.map((r) => [r.league_id, r]));
+      const leagues = Object.entries(LEAGUES).map(([id, l]) => ({ id: Number(id), name: l.name, expected: l.teams, found: Number(by[id]?.teams || 0), loaded: Number(by[id]?.loaded || 0), stale: Number(by[id]?.stale || 0) }));
+      const used = Number((await sql('select coalesce(max(calls), 0)::text as calls from api_usage where day = (now() at time zone \'utc\')::date'))[0]?.calls || 0);
+      const complete = leagues.every((l) => l.loaded >= l.expected && l.stale === 0);
+      return { leagues, complete, callsToday: used, budget: SEED_BUDGET };
+    }
+
+    /**
+     * Fill our squads table in small, rate-limited batches (free plan = 10 calls/minute, 100/day).
+     *  1. find the teams: every club that plays in these four leagues in the next two weeks (fixtures-by-date, shared cache)
+     *  2. fetch each team's squad once, then keep it for 30 days
+     * Safe to call repeatedly: it only does work that's missing, and stops at SEED_BUDGET calls for the day.
+     */
+    async function seedSquads() {
+      const lock = await sql(`insert into api_cache(key, payload, fetched_at) values ('seed:lock', '{}'::jsonb, now()) on conflict (key) do update set fetched_at = now() where api_cache.fetched_at < now() - interval '50 seconds' returning key`);
+      if (!lock.length) return { ...(await squadStatus()), busy: true };
+      const pace = env.SEED_PACE_MS === undefined ? 6500 : Number(env.SEED_PACE_MS);
+      const MAX_CALLS = 6; let made = 0; let paused = '';
+      const usage = async () => Number((await sql('select coalesce(max(calls), 0)::text as calls from api_usage where day = (now() at time zone \'utc\')::date'))[0]?.calls || 0);
+      const canCall = async () => { if (made >= MAX_CALLS) return false; if ((await usage()) >= SEED_BUDGET) { paused = 'budget'; return false; } return true; };
+      const paced = async () => { if (made > 0 && pace) await sleep(pace); made++; };
+      try {
+        // 1. discover teams from upcoming fixtures
+        const days = Array.from({ length: 14 }, (_, i) => new Date(Date.now() + i * 86400e3).toISOString().slice(0, 10));
+        for (const date of days) {
+          let rows = (await sql('select payload::text as payload from api_cache where key = $1', [`fixtures:${date}`]))[0];
+          let list = rows ? JSON.parse(rows.payload) : null;
+          if (!list) {
+            if (!(await canCall())) break;
+            await paced();
+            const r = await cached(`fixtures:${date}`, 3 * 3600, async () => (await call(`/fixtures?date=${date}&timezone=Europe/London`)).map(normFixtureRow));
+            list = r.data;
+          }
+          for (const f of list) {
+            if (!LEAGUES[f.league.id]) continue;
+            for (const t of [f.teams.home, f.teams.away]) await sql('insert into squads(team_id, name, logo, league_id, league_name) values ($1, $2, $3, $4, $5) on conflict (team_id) do update set name = excluded.name, logo = excluded.logo, league_id = excluded.league_id, league_name = excluded.league_name', [t.id, t.name, t.logo, f.league.id, LEAGUES[f.league.id].name]);
+          }
+        }
+        // 2. squads for teams we know about but haven't loaded (or that have gone stale)
+        const todo = await sql('select team_id::text as team_id from squads where league_id is not null and (players is null or fetched_at < now() - ($1 || \' days\')::interval) order by (players is null) desc, league_id, team_id', [String(SQUAD_MAX_AGE_DAYS)]);
+        for (const t of todo) {
+          if (!(await canCall())) break;
+          await paced();
+          const players = normSquad(await call(`/players/squads?team=${t.team_id}`));
+          await sql('update squads set players = $2::jsonb, fetched_at = now() where team_id = $1', [t.team_id, JSON.stringify(players)]);
+        }
+      } catch (e) {
+        paused = e.message || 'error';
+      } finally {
+        await sql(`update api_cache set fetched_at = now() - interval '1 hour' where key = 'seed:lock'`);
+      }
+      return { ...(await squadStatus()), busy: false, paused, calls: made };
+    }
+
     const { action } = body;
 
     if (action === 'fixtures') {
@@ -115,8 +189,7 @@ export async function onRequestPost({ request, env }) {
         source = 'squads';
         players = [];
         for (const [side, teamId] of [['home', home], ['away', away]]) {
-          const sq = await cached(`squad:${teamId}`, 24 * 3600, () => call(`/players/squads?team=${teamId}`));
-          (sq.data[0]?.players || []).forEach((p) => players.push({ id: p.id, name: p.name, number: p.number, photo: p.photo, role: ROLE[p.position] || 'MID', bench: null, side, teamId }));
+          (await squadFor(teamId)).forEach((p) => players.push({ ...p, bench: null, side, teamId }));
         }
       }
       players.forEach((p) => { p.photo = p.photo || `https://media.api-sports.io/football/players/${p.id}.png`; });
@@ -130,7 +203,7 @@ export async function onRequestPost({ request, env }) {
       const prev = ex ? JSON.parse(ex.state) : null;
       const st = prev?.status?.short;
       const kickoff = prev?.kickoff ? new Date(prev.kickoff).getTime() : null;
-      let ttl = 120; // live: one API call per 2 minutes shared by everyone (~55 calls for a whole match)
+      let ttl = 300; // live: one API call per 5 minutes shared by everyone (~20 calls for a whole match)
       if (st && finished(st)) ttl = 7 * 24 * 3600;
       else if (st === 'NS' && kickoff && kickoff - Date.now() > 2 * 3600e3) ttl = 30 * 60;
       else if (st === 'NS' && kickoff && kickoff - Date.now() > 0) ttl = 5 * 60;
@@ -143,6 +216,9 @@ export async function onRequestPost({ request, env }) {
       if (r.fresh) await sql('insert into fixture_state(fixture_id, state, updated_at) values ($1, $2::jsonb, now()) on conflict (fixture_id) do update set state = excluded.state, updated_at = now()', [id, JSON.stringify(r.data)]);
       return json({ state: r.data, fetchedAt: r.fetchedAt });
     }
+
+    if (action === 'squadStatus') return json(await squadStatus());
+    if (action === 'seedSquads') return json(await seedSquads());
 
     return json({ error: 'Unknown action' }, 400);
   } catch (e) {
