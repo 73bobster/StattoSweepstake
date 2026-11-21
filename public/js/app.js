@@ -210,6 +210,15 @@ async function doPassword(up) {
 function flashAuth(msg, err) { const el = document.getElementById('authmsg'); if (el) { el.textContent = msg; el.style.color = err ? 'var(--red)' : 'var(--muted)'; } }
 
 // ------------------------------------------------------------------ home
+/** Status pill for a game in the list: lobby/drafting while setting up, otherwise by kick-off time (approximate: 2h15 of play). */
+function gameStatus(s) {
+  if (s.status === 'setup') return 'Lobby';
+  if (s.status === 'drafting') return 'Drafting';
+  const ko = Date.parse(s.fixture?.kickoff);
+  if (Number.isNaN(ko)) return 'Drawn';
+  const mins = (Date.now() - ko) / 60000;
+  return mins < 0 ? 'Not started' : mins < 135 ? 'Live' : 'Finished';
+}
 async function viewHome() {
   $app.innerHTML = shell('<div class="spinner"></div>', { title: 'My games' });
   const mine = await S.api.listMine();
@@ -222,7 +231,7 @@ async function viewHome() {
     <div class="sec">${mine.length ? 'Your sweepstakes' : ''}</div>
     <div class="stack">${mine.map((s) => `
       <div class="card" data-act="open" data-id="${s.id}" style="cursor:pointer">
-        <div class="row between"><b>${esc(s.name)}</b><span class="row" style="gap:6px"><span class="pill">${s.status === 'setup' ? 'Lobby' : s.status === 'drafting' ? 'Drafting' : 'Drawn'}</span>${s.isHost ? `<button class="ghost sm" data-act="delsweep" data-id="${s.id}" title="Delete" aria-label="Delete sweepstake">🗑</button>` : ''}</span></div>
+        <div class="row between"><b>${esc(s.name)}</b><span class="row" style="gap:6px"><span class="pill">${gameStatus(s)}</span>${s.isHost ? `<button class="ghost sm" data-act="delsweep" data-id="${s.id}" title="Delete" aria-label="Delete sweepstake">🗑</button>` : ''}</span></div>
         <div class="row muted small" style="margin-top:6px">${crest(s.fixture.teams.home)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? ' v ' : ` ${esc(s.fixture.teams.home.name)} v `}${crest(s.fixture.teams.away)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? '' : ` ${esc(s.fixture.teams.away.name)}`}</div>
         <div class="small muted" style="margin-top:4px">${dayStr(s.fixture.kickoff)} · ${timeStr(s.fixture.kickoff)}${s.isHost ? ' · you are the host' : ''}</div>
       </div>`).join('') || '<p class="muted center">Nothing yet. Start one and invite your mates.</p>'}</div>`, { title: 'My games', sub: 'Your sweepstakes' });

@@ -98,7 +98,7 @@ async function createNeonApi(cfg) {
       must(await client.rpc('save_draw', { p_sweepstake: id, p_picks: picks.map((p) => ({ member_id: p.memberId, player_id: p.playerId, player_name: p.playerName, number: p.number, photo: p.photo, side: p.side, team_id: p.teamId, role: p.role, slot: p.slot })) }));
     },
     reopen: async (id) => must(await client.rpc('reopen_draw', { p_sweepstake: id })),
-    deleteSweep: async (id) => must(await client.rpc('delete_sweepstake', { p_sweepstake: id })),
+    deleteSweep: async (id) => { if (!id) throw new Error('No sweepstake selected'); must(await client.rpc('delete_sweepstake', { p_sweepstake: String(id) })); },
     updateRules: async (id, rules, awards) => must(await client.rpc('update_rules', { p_sweepstake: id, p_rules: rules, p_awards: awards })),
     // Friends see joins, the draw and match events within a few seconds (cheap polling of the shared tables).
     subscribe(sweepId, fixtureId, onChange) {
