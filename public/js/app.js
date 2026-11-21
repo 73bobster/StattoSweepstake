@@ -413,10 +413,21 @@ async function shareUpdate() {
   await navigator.clipboard?.writeText(text); toast('Update copied - paste it in your group chat');
 }
 
+/** What to say before there is anything to show: not started, kick-off due, postponed... (empty string once the match has started). */
+function waitTxt(fx = V.data?.sweep?.fixture, st = V.state) {
+  const sh = st?.status?.short;
+  if (sh === 'PST') return 'Match postponed';
+  if (sh === 'CANC') return 'Match cancelled';
+  if (hasStarted(st) || !fx?.kickoff) return '';
+  const mins = Math.round((Date.parse(st?.kickoff || fx.kickoff) - Date.now()) / 60000);
+  if (Number.isNaN(mins)) return 'Match not started yet';
+  if (mins > 0) return `Match not started yet · kick-off ${mins >= 120 ? 'in ' + Math.round(mins / 60) + ' hours' : mins >= 60 ? 'in about an hour' : 'in ' + mins + ' min'}`;
+  return mins > -3 ? 'Kick-off time - waiting for the first update' : 'Match due to start - waiting for the first update';
+}
 function matchHeader(fx, st) {
   const live = isLive(st), fin = isFinished(st), started = hasStarted(st);
   const sc = st?.goals && st.goals.home != null ? `<div class="score">${st.goals.home} - ${st.goals.away}</div>` : `<div class="score muted">v</div>`;
-  const status = fin ? '<span class="pill">Full time</span>' : live ? `<span class="pill live">${st.status.short === 'HT' ? 'Half time' : (st.status.elapsed ?? '') + "'"}</span>` : st && started ? `<span class="pill">${esc(st.status.long)}</span>` : `<span class="pill">${dayStr(fx.kickoff)} · ${timeStr(st?.kickoff || fx.kickoff)}</span>`;
+  const status = fin ? '<span class="pill">Full time</span>' : live ? `<span class="pill live">${st.status.short === 'HT' ? 'Half time' : (st.status.elapsed ?? '') + "'"}</span>` : st && started ? `<span class="pill">${esc(st.status.long)}</span>` : waitTxt(fx, st).startsWith('Match due') ? `<span class="pill">Due to start</span>` : `<span class="pill">${dayStr(fx.kickoff)} · ${timeStr(st?.kickoff || fx.kickoff)}</span>`;
   return `<div class="card match">
     <div class="small muted" style="margin-bottom:8px">${esc(fx.league?.name || '')}</div>
     <div class="teams"><div>${crest(fx.teams.home, true)}<div class="tn">${esc(fx.teams.home.name)}</div></div><div>${sc}<div style="margin-top:8px">${status}</div></div><div>${crest(fx.teams.away, true)}<div class="tn">${esc(fx.teams.away.name)}</div></div></div></div>`;
@@ -579,7 +590,7 @@ function board(res, sweep) {
         <div class="rank ${r.rank === 1 && r.points > 0 ? 'first' : ''}"><div class="pos">${r.rank}</div>
           <div><b>${esc(r.name)}</b> ${kindBadge(members0().find((m) => m.id === r.memberId))}<div class="small muted">${r.goals} goal${r.goals === 1 ? '' : 's'} · ${r.bookings} booking${r.bookings === 1 ? '' : 's'}</div></div>
           <div class="pts ${r.points > 0 ? 'pos' : r.points < 0 ? 'neg' : ''}">${r.points}</div></div>
-        ${V.open.has(r.memberId) ? `<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">${r.lines.length ? r.lines.map((l) => `<div class="line"><span>${esc(l.minute)} · <b>${esc(l.playerName)}</b> · ${esc(l.label)}</span><span class="${l.points >= 0 ? 'p-pos' : 'p-neg'}">${fmtPts(l.points)}</span></div>`).join('') : '<div class="small muted">Nothing yet.</div>'}</div>` : ''}
+        ${V.open.has(r.memberId) ? `<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">${r.lines.length ? r.lines.map((l) => `<div class="line"><span>${esc(l.minute)} · <b>${esc(l.playerName)}</b> · ${esc(l.label)}</span><span class="${l.points >= 0 ? 'p-pos' : 'p-neg'}">${fmtPts(l.points)}</span></div>`).join('') : `<div class="small muted">${esc(waitTxt() || 'Nothing yet.')}</div>`}</div>` : ''}
       </div>`).join('')}</div>
     <h3 style="margin:22px 2px 8px">Side prizes ${fin ? '' : '<span class="small" style="text-transform:none">· live, not final</span>'}</h3>
     <div class="card">${Object.entries(res.awards).map(([k, a]) => `<div class="award"><div><b>${esc(sweep.awards[k].label)}</b><div class="small muted">${esc(a.detail || '')}${a.unowned ? ' · player not in anyone’s hand' : ''}</div></div><div class="w ${a.winner?.length ? (a.final ? 'gold' : '') : 'muted'}">${a.winner?.length ? esc(a.winner.join(' & ')) : '—'}</div></div>`).join('') || '<p class="muted small">No side prizes switched on.</p>'}</div>`;
@@ -612,7 +623,7 @@ function mates(res, members, picks, sweep) {
         ${g.list.map((p) => {
           const ls = ptsOf(p.playerId); const pp = ls.reduce((t, l) => t + l.points, 0);
           return `<div class="player">${p.photo ? `<img class="photo" src="${esc(p.photo)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'shirt',textContent:'${esc(p.number ?? '')}'}))">` : `<div class="shirt">${esc(p.number ?? '')}</div>`}
-            <div class="grow"><b>${esc(p.playerName)}</b><div class="small muted">${ls.length ? ls.map((l) => `${esc(l.minute)} ${esc(l.label)} (${fmtPts(l.points)})`).join(' · ') : 'Nothing yet'}</div></div>
+            <div class="grow"><b>${esc(p.playerName)}</b><div class="small muted">${ls.length ? ls.map((l) => `${esc(l.minute)} ${esc(l.label)} (${fmtPts(l.points)})`).join(' · ') : esc(waitTxt() || 'Nothing yet')}</div></div>
             <span class="badge ${p.role}">${p.role}</span>${p.slot === 'sub' ? '<span class="badge sub">SUB</span>' : ''}
             <b class="${pp > 0 ? 'p-pos' : pp < 0 ? 'p-neg' : 'muted'}" style="min-width:28px;text-align:right">${pp ? fmtPts(pp) : '0'}</b></div>`;
         }).join('')}`).join('')}
@@ -659,7 +670,7 @@ function feed(res, members, sweep, st) {
     const o = members.find((m) => m.id === e.ownerMemberId); const pts = sweep.rules[e.kind];
     return `<div class="ev"><div class="min">${esc(e.minute)}</div><div>${icon[e.kind]}</div><div><b>${esc(e.pname || '')}</b> <span class="muted">${lbl[e.kind]}</span>
       <div class="small ${o ? '' : 'muted'}">${o ? `${esc(o.name)}’s player <span class="${pts?.points >= 0 ? 'p-pos' : 'p-neg'}">${fmtPts(pts?.on ? pts.points : 0)}</span>` : 'Nobody’s player'}${e.aname && e.kind === 'goal' ? ` · assist ${esc(e.aname)}` : ''}</div></div></div>`;
-  }).join('') || '<p class="muted center">No goals or cards yet. Events appear here as they happen.</p>'}</div>
+  }).join('') || `<p class="muted center">${esc(waitTxt(sweep.fixture, st) || 'No goals or cards yet. Events appear here as they happen.')}</p>`}</div>
   <div class="center" style="margin-top:12px"><button class="ghost sm" data-act="refresh">↻ Refresh now</button></div>`;
 }
 
