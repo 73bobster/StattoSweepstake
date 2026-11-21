@@ -549,7 +549,7 @@ function lobby(sweep, members, isHost, st) {
     </div>
     ${isHost && V.cfgEdit ? cfgPanel(dc) : `<div class="card" style="margin-top:12px"><div class="small muted">${summaryText(sweep.drawConfig)}</div>${isHost ? `<button class="soft sm" style="margin-top:8px" data-act="cfgedit">Change rules</button>` : ''}</div>`}
     ${V.pool ? `<div class="banner ${V.pool.source === 'lineups' ? 'info' : ''}" style="margin-top:8px;padding:8px 10px;font-size:13px">${V.pool.source === 'lineups' ? '✅ Confirmed line-ups' : dc.lineup === 'squad' ? 'Full squads' : '⚠️ Line-ups not out yet - using full squads; redraw once they land'}${V.pool.source === 'lineups' ? '' : V.pool.excluded?.length ? ` · ${V.pool.excluded.length} injured left out` : V.pool.injuriesError ? ' · injury check failed' : ' · no injuries listed'}</div>` : ''}
-    ${V.poolErr ? `<div class="banner err" style="margin-top:12px">${esc(V.poolErr)}${isHost && dc.lineup === 'xi' ? `<div style="margin-top:8px"><button class="soft sm" data-act="usesquads">Use full squads instead</button></div>` : ''}</div>` : ''}
+    ${V.poolErr ? `<div class="banner err" style="margin-top:12px">${esc(V.poolErr)}${isHost && /aren.t out yet/.test(V.poolErr) ? `<div style="margin-top:8px"><button class="soft sm" data-act="dealsquads">Deal from the full squads now</button></div>` : ''}</div>` : ''}
     ${!feas.ok ? `<div class="banner err" style="margin-top:12px">${esc(feas.message)}</div>` : ''}
     ${isHost ? `<div class="sticky-cta stack"><button class="block" data-act="draw" ${members.length < 2 || S.busy ? 'disabled' : ''}>${members.length < 2 ? 'Waiting for friends…' : S.busy ? 'Working…' : dc.pick === 'draft' ? '🧢 Start the draft' : '🎲 Deal the players'}</button>${friends ? '<div class="small muted center">Everyone who has joined is in. New joiners are blocked once the players are dealt.</div>' : ''}</div>`
     : `<p class="muted center" style="margin-top:16px">Waiting for the host to ${dc.pick === 'draft' ? 'start the draft' : 'run the draw'}…</p>`}`;
@@ -561,6 +561,7 @@ async function fetchPool(sweep) {
   const mins = (Date.parse(sweep.fixture.kickoff) - Date.now()) / 60000;
   const soon = !Number.isNaN(mins) && mins <= 90;   // line-ups usually appear about an hour before kick-off: look for them
   const mustHave = dc.lineup === 'xi' || (!Number.isNaN(mins) && mins <= 45); // in the last 45 minutes nobody outside XI + bench is dealt
+  if (V.forceSquads) { V.forceSquads = false; return await S.api.getPool(sweep.fixture, false, true); } // host chose: deal from the full squads now
   const res = await S.api.getPool(sweep.fixture, mustHave, dc.lineup === 'squad' && !soon); // only force a fresh look-up in the last 45 min
   if (mustHave && res.source !== 'lineups') throw new Error(dc.lineup === 'xi' ? 'The line-ups aren’t out yet - they usually land about an hour before kick-off. Try again then, or switch to full squads.' : 'Line-ups aren’t out yet and kick-off is close. Try again in a few minutes - only the starting 11 and bench are dealt now.');
   return res;
@@ -830,6 +831,7 @@ document.addEventListener('click', async (ev) => {
       const sw = V.data.sweep, e = V.cfgEdit; const dc = { ...cfgOf(sw.drawConfig), ...e }; delete dc.order; delete dc.each;
       const rules = clone(sw.rules); setAppearance(rules, e.lineup === 'squad');
       try { await S.api.updateSetup(V.id, dc, rules); V.cfgEdit = null; V.poolErr = ''; V.pool = null; await refreshSweep(); toast('Rules updated'); renderSweep(); } catch (err) { toast(err.message); } return; }
+    case 'dealsquads': V.forceSquads = true; return doDraw();
     case 'usesquads': { const sw = V.data.sweep; const dc = { ...cfgOf(sw.drawConfig), lineup: 'squad' }; const rules = clone(sw.rules); setAppearance(rules, true); await S.api.updateSetup(V.id, dc, rules); V.poolErr = ''; await refreshSweep(); return renderSweep(); }
     case 'refresh': await pollState(true); return renderSweep();
     case 'demokick': await S.api.startDemoMatch(); await pollState(); return;
