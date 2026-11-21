@@ -71,6 +71,8 @@ async function createNeonApi(cfg) {
     },
     squadStatus: () => fn({ action: 'squadStatus' }),
     seedSquads: () => fn({ action: 'seedSquads' }),
+    ffPlan: () => fn({ action: 'ffPlan' }),
+    ffStep: (o) => fn({ action: 'ffStep', ...o }),
     updateSetup: async (id, drawConfig, rules) => must(await client.rpc('update_setup', { p_sweepstake: id, p_draw_config: drawConfig, p_rules: rules })),
     setMembers: async (id, members) => must(await client.rpc('set_virtual_members', { p_sweepstake: id, p_members: members })),
     startDraft: async (id, order, pool, each) => must(await client.rpc('start_draft', { p_sweepstake: id, p_order: order, p_pool: pool, p_each: each })),
@@ -211,6 +213,8 @@ function createDemoApi() {
     },
     async squadStatus() { return { leagues: [], complete: true }; },
     async seedSquads() { return { leagues: [], complete: true }; },
+    async ffPlan() { throw new Error('Football data loading needs the live site'); },
+    async ffStep() { throw new Error('Football data loading needs the live site'); },
     async updateSetup(id, drawConfig, rules) { const d = db(); const s = d.sweeps.find((x) => x.id === id); s.drawConfig = drawConfig; s.rules = rules; write(d); },
     async setMembers(id, members) {
       const d = db(); d.members = d.members.filter((m) => !(m.sweepId === id && m.kind && m.kind !== 'user'));

@@ -106,6 +106,34 @@ function squadsSection() {
       <div class="small muted" style="margin-top:6px">${st?.complete ? 'All squads are stored. Games deal players from here, with no live look-ups.' : S.seeding ? 'Loading squads in the background (a few every minute). Keep the app open.' : S.squadErr ? esc(S.squadErr) : 'Squads are stored once and reused. The free data plan limits how many we can fetch per day, so this finishes over a day or two.'}</div>
       ${!st?.complete && !S.seeding ? `<button class="soft block" data-act="loadsquads" style="margin-top:8px">Load squads now</button>` : ''}</div>`;
 }
+const FF_LEAGUES = { 39: 'Premier League', 40: 'Championship', 179: 'Scottish Premiership', 180: 'Scottish Championship' };
+function footballDataSection() {
+  const f = S.ff || {};
+  return `<div class="sec">Football data</div>
+    <div class="card flat"><div class="small muted">Loads clubs, players and season stats into the shared football database (one-off; carries on where it stopped if interrupted).</div>
+      <div class="small" id="ffmsg" style="margin-top:6px">${esc(f.err ? 'Stopped: ' + f.err : f.msg || '')}</div>
+      ${f.running ? '' : `<button class="soft block" data-act="loadfootball" style="margin-top:8px">${f.done ? 'Check for more' : 'Load football data'}</button>`}</div>`;
+}
+async function runFootballLoad() {
+  if (S.ff?.running) return;
+  const say = (msg) => { S.ff.msg = msg; const el = document.getElementById('ffmsg'); if (el) el.textContent = msg; };
+  S.ff = { running: true, msg: 'Planning…' }; refreshSettings();
+  try {
+    const plan = await S.api.ffPlan();
+    for (const l of plan.leagues) { say(`Setting up ${FF_LEAGUES[l]}`); await S.api.ffStep({ step: 'league', league: l }); }
+    for (const t of plan.todo) {
+      const lbl = `${FF_LEAGUES[t.league]} ${t.season}/${String(t.season + 1).slice(2)}`;
+      say(`${lbl}: clubs`); await S.api.ffStep({ step: 'teams', ...t });
+      let page = 1, total = 1;
+      while (page <= total) { say(`${lbl}: players ${page}/${total}`); const r = await S.api.ffStep({ step: 'players', ...t, page }); total = r.total; page++; }
+    }
+    const p2 = await S.api.ffPlan();
+    let n = 0; for (const team of p2.numbers) { say(`Shirt numbers ${++n}/${p2.numbers.length}`); await S.api.ffStep({ step: 'numbers', team }); }
+    const c = (await S.api.ffPlan()).counts;
+    S.ff = { done: true, msg: `Done: ${c.players} players, ${c.clubs} clubs, ${c.stats} season records.` };
+  } catch (e) { S.ff = { err: e.message, msg: S.ff?.msg }; }
+  refreshSettings();
+}
 function refreshSettings() { if (document.querySelector('.modal-back')) { closeModal(); document.body.insertAdjacentHTML('beforeend', settingsModal()); } }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Keep our own copy of the squads topped up (Premier League, Championship, Scottish Premiership and Championship). */
@@ -133,6 +161,7 @@ function settingsModal() {
     <div class="small muted">Theme</div><div class="chips" style="flex-wrap:wrap">${THEMES.map(([k, l]) => `<div class="chip ${t === k ? 'on' : ''}" data-act="theme" data-k="${k}">${l}</div>`).join('')}</div>
     <div class="small muted" style="margin-top:10px">App colour</div><div class="chips" style="flex-wrap:wrap">${ACCENTS.map(([n, a, b]) => `<div class="swatch ${ac === n ? 'on' : ''}" title="${n}" data-act="accent" data-k="${n}" style="background:linear-gradient(135deg,${a} 50%,${b} 50%)"></div>`).join('')}</div>
     ${S.api.mode === 'neon' ? squadsSection() : ''}
+    ${S.api.mode === 'neon' && !u.guest ? footballDataSection() : ''}
     <div class="sec">Account</div>
     <div class="card flat"><div class="kv"><span>Signed in as</span><b>${esc(u.name || '—')}</b></div><div class="kv"><span>Email</span><b>${u.guest ? 'Guest (no email)' : esc(u.email || '')}</b></div></div>
     ${u.guest ? `<p class="small muted">You're playing as a guest on this device. Create an account from the sign-in page to keep your games on every device.</p>` : ''}
@@ -194,7 +223,7 @@ async function viewHome() {
     <div class="stack">${mine.map((s) => `
       <div class="card" data-act="open" data-id="${s.id}" style="cursor:pointer">
         <div class="row between"><b>${esc(s.name)}</b><span class="pill">${s.status === 'setup' ? 'Lobby' : s.status === 'drafting' ? 'Drafting' : 'Drawn'}</span></div>
-        <div class="row muted small" style="margin-top:6px">${crest(s.fixture.teams.home)} ${esc(s.fixture.teams.home.name)} v ${crest(s.fixture.teams.away)} ${esc(s.fixture.teams.away.name)}</div>
+        <div class="row muted small" style="margin-top:6px">${crest(s.fixture.teams.home)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? ' v ' : ` ${esc(s.fixture.teams.home.name)} v `}${crest(s.fixture.teams.away)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? '' : ` ${esc(s.fixture.teams.away.name)}`}</div>
         <div class="small muted" style="margin-top:4px">${dayStr(s.fixture.kickoff)} · ${timeStr(s.fixture.kickoff)}${s.isHost ? ' · you are the host' : ''}</div>
       </div>`).join('') || '<p class="muted center">Nothing yet. Start one and invite your mates.</p>'}</div>`, { title: 'My games', sub: 'Your sweepstakes' });
 }
@@ -658,6 +687,7 @@ document.addEventListener('click', async (ev) => {
     case 'theme': localStorage.setItem('statto_theme', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
     case 'accent': localStorage.setItem('statto_accent', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
     case 'loadsquads': ensureSquads(); return;
+    case 'loadfootball': runFootballLoad(); return;
     case 'logoff': closeModal(); await S.api.auth.signOut(); S.user = null; return go('#/');
     case 'authmode': AUTH.mode = d.k; return viewWelcome();
     case 'signin': return doPassword(false);

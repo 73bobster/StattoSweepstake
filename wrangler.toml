@@ -4,4 +4,6 @@ pages_build_output_dir = "public"
 
 [vars]
 NEON_JWKS_URL = "https://ep-odd-bar-za0gcueb.neonauth.c-2.eu-west-2.aws.neon.tech/neondb/auth/.well-known/jwks.json"
+API_DAILY_LIMIT = "7500"   # API-Football Pro. Set back to 100 (or remove) if the plan drops to free.
+LOADER_ENABLED = "true"    # football-data loader. Switch to "false" once the data is loaded.
 # Secrets (set in Cloudflare Pages > Settings > Variables and Secrets, never committed): DATABASE_URL, API_FOOTBALL_KEY

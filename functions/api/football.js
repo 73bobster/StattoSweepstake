@@ -4,10 +4,11 @@
 // Squads are NOT fetched per game: they live in our own `squads` table (see seedSquads). The API is used only for
 // fixtures (what's on), line-ups and live match events (polled at most every 5 minutes for everyone together).
 //
-// Secrets (Cloudflare Pages > Settings > Variables and Secrets): DATABASE_URL, API_FOOTBALL_KEY
+// Secrets (Cloudflare Pages > Settings > Variables and Secrets): DATABASE_URL, API_FOOTBALL_KEY, FOOTBALL_DATABASE_URL (shared football-data DB)
 // Plain variable (wrangler.toml): NEON_JWKS_URL
 import { verifyJwt } from '../_lib/jwt.js';
 import { makeSql } from '../_lib/neon.js';
+import * as fd from '../_lib/footballdata.js';
 
 const API = 'https://v3.football.api-sports.io';
 const DAILY_BUDGET = 95; // stop before the 100/day free limit
@@ -73,14 +74,15 @@ export async function onRequestPost({ request, env }) {
     const sql = makeSql(env.DATABASE_URL);
     const body = await request.json().catch(() => ({}));
 
-    async function call(path) {
+    const dailyLimit = Number(env.API_DAILY_LIMIT) || DAILY_BUDGET; // 7500 on API-Football Pro (wrangler.toml var); 95 on the free plan
+    async function call(path, raw = false) {
       const [{ calls }] = await sql('insert into api_usage(day, calls) values ((now() at time zone \'utc\')::date, 1) on conflict (day) do update set calls = api_usage.calls + 1 returning calls::text as calls');
-      if (Number(calls) > DAILY_BUDGET) throw new Error('Daily API-Football budget reached - try again tomorrow');
+      if (Number(calls) > (dailyLimit > 1000 ? dailyLimit - 50 : DAILY_BUDGET)) throw new Error('Daily API-Football budget reached - try again tomorrow');
       const r = await fetch(API + path, { headers: { 'x-apisports-key': env.API_FOOTBALL_KEY } });
       const j = await r.json();
       const errs = j.errors && (Array.isArray(j.errors) ? j.errors : Object.values(j.errors));
       if (errs && errs.length) throw new Error(String(errs[0]));
-      return j.response;
+      return raw ? { response: j.response, paging: j.paging } : j.response;
     }
 
     async function cached(key, ttlSec, load, force = false) {
@@ -217,6 +219,19 @@ export async function onRequestPost({ request, env }) {
       return json({ state: r.data, fetchedAt: r.fetchedAt });
     }
 
+    if (action === 'ffPlan' || action === 'ffStep') { // football-data loader (see functions/_lib/footballdata.js); switch off with LOADER_ENABLED once loaded
+      if (env.LOADER_ENABLED !== 'true') return json({ error: 'Football data loader is switched off' }, 403);
+      if (!env.FOOTBALL_DATABASE_URL) return json({ error: 'FOOTBALL_DATABASE_URL secret is not set yet' }, 503);
+      const ctx = { fsql: makeSql(env.FOOTBALL_DATABASE_URL), api: (p) => call(p), apiRaw: (p) => call(p, true), limit: dailyLimit,
+        usage: async () => Number((await sql('select coalesce(max(calls), 0)::text as calls from api_usage where day = (now() at time zone \'utc\')::date'))[0]?.calls || 0) };
+      if (action === 'ffPlan') return json(await fd.plan(ctx));
+      const league = Number(body.league), season = body.season === undefined ? undefined : Number(body.season);
+      if (body.step === 'league') return json(await fd.stepLeague(ctx, league));
+      if (body.step === 'teams') return json(await fd.stepTeams(ctx, league, season));
+      if (body.step === 'players') return json(await fd.stepPlayers(ctx, league, season, Math.max(1, Number(body.page) || 1)));
+      if (body.step === 'numbers') return json(await fd.stepNumbers(ctx, String(body.team)));
+      return json({ error: 'Unknown step' }, 400);
+    }
     if (action === 'apiStatus') { // plan and quota of the key in use (never returns the key); /status is not metered by API-Football
       const r = await fetch(API + '/status', { headers: { 'x-apisports-key': env.API_FOOTBALL_KEY } });
       const j = await r.json();
