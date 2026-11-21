@@ -73,7 +73,7 @@ function navItems() {
   const r = S.route || [];
   if (r[0] === 's' && V.data) {
     const items = [['home', '🏠', 'My games']];
-    if (V.data.sweep.status === 'drawn') [['board', '🏆', 'Leaderboard'], ['teams', '👥', 'Teams'], ['feed', '📣', 'Live feed'], ['rules', '⚙️', 'Scoring']].forEach(([k, i, l]) => items.push(['tab', i, l, k, V.tab === k]));
+    if (V.data.sweep.status === 'drawn') [['board', '🏆', 'Leaderboard'], ['teams', '👥', 'Mates'], ['feed', '📣', 'Live feed'], ['rules', '⚙️', 'Scoring']].forEach(([k, i, l]) => items.push(['tab', i, l, k, V.tab === k]));
     else items.push(['tab', '🎟️', 'Lobby', 'board', true]);
     return items;
   }
@@ -378,7 +378,7 @@ function renderSweep() {
     const res = computeScores({ rules: sweep.rules, awards: sweep.awards, members, picks, state: st });
     V.res = res;
     body = '<div style="height:12px"></div>'
-      + (V.tab === 'board' ? board(res, sweep) : V.tab === 'teams' ? teams(res, members, picks, sweep) : V.tab === 'feed' ? feed(res, members, sweep, st) : rulesTab(sweep, isHost, st));
+      + (V.tab === 'board' ? board(res, sweep) : V.tab === 'teams' ? mates(res, members, picks, sweep) : V.tab === 'feed' ? feed(res, members, sweep, st) : rulesTab(sweep, isHost, st));
   }
   const demoKick = S.api.mode === 'demo' && !hasStarted(st) ? `<button class="soft block" data-act="demokick" style="margin-top:10px">▶ Kick off demo match (plays out in ~3 min)</button>` : '';
   $app.innerHTML = shell(`
@@ -528,6 +528,53 @@ function board(res, sweep) {
     <div class="card">${Object.entries(res.awards).map(([k, a]) => `<div class="award"><div><b>${esc(sweep.awards[k].label)}</b><div class="small muted">${esc(a.detail || '')}${a.unowned ? ' · player not in anyone’s hand' : ''}</div></div><div class="w ${a.winner?.length ? (a.final ? 'gold' : '') : 'muted'}">${a.winner?.length ? esc(a.winner.join(' & ')) : '—'}</div></div>`).join('') || '<p class="muted small">No side prizes switched on.</p>'}</div>`;
 }
 
+
+/** Mates as buttons; tap one to see their players, who to root for, and points so far. */
+function mates(res, members, picks, sweep) {
+  const fx = sweep.fixture;
+  const me = members.find((m) => m.userId === S.user.id);
+  const sel = members.find((m) => m.id === V.mate) || (me && members.find((m) => m.id === me.id)) || members[0];
+  V.mate = sel?.id;
+  const row = (id) => res.rows.find((r) => r.memberId === id);
+  const byMember = (id) => picks.filter((p) => p.memberId === id).sort((a, b) => (a.slot === 'sub') - (b.slot === 'sub') || a.side.localeCompare(b.side));
+  const btns = res.rows.slice().sort((a, b) => members.findIndex((m) => m.id === a.memberId) - members.findIndex((m) => m.id === b.memberId)).map((r) => {
+    const m = members.find((x) => x.id === r.memberId);
+    return `<button class="opt ${m.id === sel.id ? 'on' : ''}" data-act="mate" data-id="${m.id}" style="padding:10px 12px;width:auto"><span class="avatar">${esc(initials(m.name))}</span><span><b style="font-size:14px">${esc(m.name)}</b><span class="d">${r.points} pt${r.points === 1 ? '' : 's'}${r.rank === 1 && r.points > 0 ? ' · 👑' : ''}</span></span></button>`;
+  }).join('');
+  const mine = byMember(sel.id); const r = row(sel.id);
+  const ptsOf = (pid) => (r?.lines || []).filter((l) => l.playerId === pid);
+  const total = r?.points ?? 0;
+  const byTeam = ['home', 'away'].map((side) => ({ side, list: mine.filter((p) => p.side === side) })).filter((g) => g.list.length);
+  return `
+    <div class="small muted" style="margin:2px 2px 8px">Tap a mate to see who they’re rooting for.</div>
+    <div class="chips" style="flex-wrap:wrap;gap:8px">${btns}</div>
+    <div class="card" style="margin-top:12px">
+      <div class="row between"><div class="row"><span class="avatar">${esc(initials(sel.name))}</span><b style="font-size:17px">${esc(sel.name)}</b>${kindBadge(sel)}</div><b class="pts ${total > 0 ? 'pos' : total < 0 ? 'neg' : ''}" style="font-size:28px">${total}</b></div>
+      <div class="small muted" style="margin:4px 0 6px">${mine.length} player${mine.length === 1 ? '' : 's'} · points so far</div>
+      ${byTeam.map((g) => `<div class="row small muted" style="margin:10px 0 2px">${crest(fx.teams[g.side])}<b style="color:var(--text)">Root for ${esc(fx.teams[g.side].name)}</b></div>
+        ${g.list.map((p) => {
+          const ls = ptsOf(p.playerId); const pp = ls.reduce((t, l) => t + l.points, 0);
+          return `<div class="player">${p.photo ? `<img class="photo" src="${esc(p.photo)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'shirt',textContent:'${esc(p.number ?? '')}'}))">` : `<div class="shirt">${esc(p.number ?? '')}</div>`}
+            <div class="grow"><b>${esc(p.playerName)}</b><div class="small muted">${ls.length ? ls.map((l) => `${esc(l.minute)} ${esc(l.label)} (${fmtPts(l.points)})`).join(' · ') : 'Nothing yet'}</div></div>
+            <span class="badge ${p.role}">${p.role}</span>${p.slot === 'sub' ? '<span class="badge sub">SUB</span>' : ''}
+            <b class="${pp > 0 ? 'p-pos' : pp < 0 ? 'p-neg' : 'muted'}" style="min-width:28px;text-align:right">${pp ? fmtPts(pp) : '0'}</b></div>`;
+        }).join('')}`).join('')}
+      <div style="margin-top:12px"><button class="soft block" data-act="tellmate" data-id="${sel.id}">📣 Tell ${esc(sel.name)} who to root for</button></div>
+    </div>`;
+}
+
+async function tellMate(id) {
+  const { sweep, members, picks } = V.data; const fx = sweep.fixture; const m = members.find((x) => x.id === id); if (!m) return;
+  const r = V.res?.rows.find((x) => x.memberId === id);
+  const lines = ['home', 'away'].map((side) => {
+    const list = picks.filter((p) => p.memberId === id && p.side === side);
+    return list.length ? `${fx.teams[side].name}: ${list.map((p) => p.playerName + (p.slot === 'sub' ? ' (sub)' : '')).join(', ')}` : null;
+  }).filter(Boolean);
+  const text = `${m.name}, for ${fx.teams.home.name} v ${fx.teams.away.name} you're rooting for:\n${lines.join('\n')}${r ? `\n\nYou have ${r.points} point${r.points === 1 ? '' : 's'} so far.` : ''}`;
+  if (navigator.share) { try { await navigator.share({ text }); return; } catch { /* cancelled */ } }
+  await navigator.clipboard?.writeText(text); toast(`Copied - paste it to ${m.name}`);
+}
+
 function teams(res, members, picks, sweep) {
   const pts = new Map();
   res.rows.forEach((r) => r.lines.forEach((l) => pts.set(l.playerId, (pts.get(l.playerId) || 0) + l.points)));
@@ -612,6 +659,8 @@ document.addEventListener('click', async (ev) => {
     case 'dpick': return doDraftPick(Number(d.id));
     case 'dfilter': V.dfilter = { ...(V.dfilter || { side: 'all', role: 'all' }), [d.f]: d.v }; return renderSweep();
     case 'shareupdate': return shareUpdate();
+    case 'mate': V.mate = d.id; return renderSweep();
+    case 'tellmate': return tellMate(d.id);
     case 'editnames': V.namesEdit = true; V.namesText = undefined; return renderSweep();
     case 'cancelnames': V.namesEdit = false; V.namesText = undefined; return renderSweep();
     case 'savenames': { const names = parseNames(document.getElementById('lnames').value); if (!names.length) return toast('Add at least one name'); await S.api.setMembers(V.id, names.map((n) => ({ name: n, kind: 'local' }))); V.namesEdit = false; V.namesText = undefined; await refreshSweep(); return renderSweep(); }
