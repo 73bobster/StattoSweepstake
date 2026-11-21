@@ -217,6 +217,12 @@ export async function onRequestPost({ request, env }) {
       return json({ state: r.data, fetchedAt: r.fetchedAt });
     }
 
+    if (action === 'apiStatus') { // plan and quota of the key in use (never returns the key); /status is not metered by API-Football
+      const r = await fetch(API + '/status', { headers: { 'x-apisports-key': env.API_FOOTBALL_KEY } });
+      const j = await r.json();
+      const x = j.response || {};
+      return json({ plan: x.subscription?.plan ?? null, active: x.subscription?.active ?? null, end: x.subscription?.end ?? null, used: x.requests?.current ?? null, limitDay: x.requests?.limit_day ?? null, errors: j.errors || null, keyTail: String(env.API_FOOTBALL_KEY).slice(-4) });
+    }
     if (action === 'squadStatus') return json(await squadStatus());
     if (action === 'seedSquads') return json(await seedSquads());
 
