@@ -99,14 +99,6 @@ function shell(inner, opts = {}) {
     </div>`;
 }
 
-function squadsSection() {
-  const st = S.squadStatus;
-  const rows = st?.leagues?.length ? st.leagues.map((l) => `<div class="kv"><span>${esc(l.name)}</span><b>${l.loaded}/${l.expected}</b></div>`).join('') : '<div class="small muted">Checking…</div>';
-  return `<div class="sec">Player squads</div>
-    <div class="card flat">${rows}
-      <div class="small muted" style="margin-top:6px">${st?.complete ? 'All squads are stored. Games deal players from here, with no live look-ups.' : S.seeding ? 'Loading squads in the background (a few every minute). Keep the app open.' : S.squadErr ? esc(S.squadErr) : 'Squads are stored once and reused. The free data plan limits how many we can fetch per day, so this finishes over a day or two.'}</div>
-      ${!st?.complete && !S.seeding ? `<button class="soft block" data-act="loadsquads" style="margin-top:8px">Load squads now</button>` : ''}</div>`;
-}
 const FF_LEAGUES = { 39: 'Premier League', 40: 'Championship', 179: 'Scottish Premiership', 180: 'Scottish Championship' };
 function footballDataSection() {
   const f = S.ff || {};
@@ -137,22 +129,6 @@ async function runFootballLoad() {
 }
 function refreshSettings() { if (document.querySelector('.modal-back')) { closeModal(); document.body.insertAdjacentHTML('beforeend', settingsModal()); } }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-/** Keep our own copy of the squads topped up (Premier League, Championship, Scottish Premiership and Championship). */
-async function ensureSquads() {
-  if (S.api.mode !== 'neon' || S.seeding || !S.user) return;
-  try {
-    S.squadErr = '';
-    let st = await S.api.squadStatus(); S.squadStatus = st; refreshSettings();
-    if (st.complete) return;
-    S.seeding = true; refreshSettings();
-    for (let i = 0; i < 40 && S.user; i++) {
-      st = await S.api.seedSquads(); S.squadStatus = st; refreshSettings();
-      if (st.complete) break;
-      if (st.paused) { S.squadErr = st.paused === 'budget' ? 'Paused for today to save the free data allowance - it carries on tomorrow.' : st.paused; break; }
-      if (st.busy) await wait(30000);
-    }
-  } catch (e) { S.squadErr = e.message; } finally { S.seeding = false; refreshSettings(); }
-}
 
 // ---- favourite leagues and teams (signed-in users)
 function favSection() {
@@ -189,7 +165,6 @@ function settingsModal() {
     <div class="sec">Appearance</div>
     <div class="small muted">Theme</div><div class="chips" style="flex-wrap:wrap">${THEMES.map(([k, l]) => `<div class="chip ${t === k ? 'on' : ''}" data-act="theme" data-k="${k}">${l}</div>`).join('')}</div>
     <div class="small muted" style="margin-top:10px">App colour</div><div class="chips" style="flex-wrap:wrap">${ACCENTS.map(([n, a, b]) => `<div class="swatch ${ac === n ? 'on' : ''}" title="${n}" data-act="accent" data-k="${n}" style="background:linear-gradient(135deg,${a} 50%,${b} 50%)"></div>`).join('')}</div>
-    ${S.api.mode === 'neon' ? squadsSection() : ''}
     ${!u.guest ? favSection() : ''}
     ${S.api.mode === 'neon' && !u.guest && S.admin ? footballDataSection() : ''}
     <div class="sec">Account</div>
@@ -768,7 +743,6 @@ document.addEventListener('click', async (ev) => {
     case 'closesettings': if (el.classList.contains('modal-back') && ev.target !== el) return; return closeModal();
     case 'theme': localStorage.setItem('statto_theme', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
     case 'accent': localStorage.setItem('statto_accent', d.k); applyLook(); closeModal(); return document.body.insertAdjacentHTML('beforeend', settingsModal());
-    case 'loadsquads': ensureSquads(); return;
     case 'loadfootball': runFootballLoad(); return;
     case 'favkind': S.favKind = d.k; return refreshSettings();
     case 'favadd': { const x = S.favRes?.[Number(d.i)]; if (!x) return; const P = S.prefs ||= { leagues: [], teams: [] }; const k = S.favKind === 'league' ? 'leagues' : 'teams';
