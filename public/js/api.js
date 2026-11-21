@@ -103,7 +103,7 @@ async function createNeonApi(cfg) {
         client.from('members').select('*').eq('sweepstake_id', id).order('joined_at'),
         client.from('picks').select('*').eq('sweepstake_id', id),
       ]);
-      return { sweep: mapSweep(must(s)), members: must(m).map(mapMember), picks: must(p).map(mapPick) };
+      return { sweep: mapSweep(must(s)), members: must(m).map(mapMember).filter((x) => x.kind !== 'viewer'), picks: must(p).map(mapPick) };
     },
     async saveDraw(id, picks) {
       must(await client.rpc('save_draw', { p_sweepstake: id, p_picks: picks.map((p) => ({ member_id: p.memberId, player_id: p.playerId, player_name: p.playerName, number: p.number, photo: p.photo, side: p.side, team_id: p.teamId, role: p.role, slot: p.slot })) }));
@@ -268,12 +268,11 @@ function createDemoApi() {
       const u = sessionUser(); const d = db(); const s = d.sweeps.find((x) => x.code === c.toUpperCase());
       if (!s) throw new Error('Invite code not found');
       if (d.members.some((m) => m.sweepId === s.id && m.userId === u.id)) return s.id;
-      if (s.status !== 'setup') throw new Error('The draw has already happened - ask the host to reopen it');
-      d.members.push({ id: uid(), sweepId: s.id, userId: u.id, name, isHost: false, kind: 'user' });
+      d.members.push({ id: uid(), sweepId: s.id, userId: u.id, name, isHost: false, kind: s.status === 'setup' ? 'user' : 'viewer' });
       write(d); return s.id;
     },
     async listMine() { const u = sessionUser(); const d = db(); return d.members.filter((m) => m.userId === u.id).map((m) => ({ ...d.sweeps.find((s) => s.id === m.sweepId), isHost: m.isHost })).filter((s) => s.id); },
-    async load(id) { const d = db(); const sweep = d.sweeps.find((s) => s.id === id); if (!sweep) throw new Error('Sweepstake not found'); return { sweep, members: d.members.filter((m) => m.sweepId === id), picks: d.picks.filter((p) => p.sweepId === id) }; },
+    async load(id) { const d = db(); const sweep = d.sweeps.find((s) => s.id === id); if (!sweep) throw new Error('Sweepstake not found'); return { sweep, members: d.members.filter((m) => m.sweepId === id && m.kind !== 'viewer'), picks: d.picks.filter((p) => p.sweepId === id) }; },
     async saveDraw(id, picks) {
       const d = db(); d.picks = d.picks.filter((p) => p.sweepId !== id).concat(picks.map((p) => ({ ...p, id: uid(), sweepId: id })));
       d.sweeps.find((s) => s.id === id).status = 'drawn'; write(d);

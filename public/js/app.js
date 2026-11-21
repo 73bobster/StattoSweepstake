@@ -261,13 +261,14 @@ async function viewJoin(code) {
     // The draw is done: someone the host dealt in (or who was dealt in randomly) can claim their own spot and see their players.
     const mine = (await S.api.listMine().catch(() => [])).find((x) => x.id === prev.id);
     if (mine) return go('#/s/' + prev.id);
-    let spots = [], spotErr = '';
-    try { spots = await S.api.claimable(code); } catch (e) { spotErr = e.message; }
-    return void ($app.innerHTML = shell(spots.length ? `
+    let spots = [];
+    try { spots = await S.api.claimable(code); } catch { /* can't list the spots: just let them watch */ }
+    if (!spots.length) return doJoin(code, (S.user.name || '').trim() || 'Viewer'); // nobody to claim: just watch
+    return void ($app.innerHTML = shell(`
       <div class="card stack"><div><b>${esc(prev.name)}</b><div class="small muted">${esc(prev.fixture.teams.home.name)} v ${esc(prev.fixture.teams.away.name)} · players already dealt</div></div>
-      <div class="small muted">Which one are you? You'll see your own players and score on your own phone.</div>
-      ${spots.map((m) => `<button class="soft block" data-act="claim" data-code="${code}" data-id="${m.id}" style="text-align:left"><b>${esc(m.name)}</b> <span class="muted small">· ${m.pickCount} player${m.pickCount === 1 ? '' : 's'}</span></button>`).join('')}</div>`
-      : `<div class="banner err">${spotErr ? 'Couldn\u2019t check the spots: ' + esc(spotErr) : 'The players have already been dealt and there\u2019s no spare spot to claim.'} Ask the host to reopen the draw if you should be in.</div><p><button class="ghost" data-act="home">Back</button></p>`, { title: "You're invited" }));
+      <div class="small muted">Were you one of the players? Tap your name to see your own players. Otherwise you can just watch.</div>
+      ${spots.map((m) => `<button class="soft block" data-act="claim" data-code="${code}" data-id="${m.id}" style="text-align:left"><b>${esc(m.name)}</b> <span class="muted small">· ${m.pickCount} player${m.pickCount === 1 ? '' : 's'}</span></button>`).join('')}
+      <button class="ghost block" data-act="watch" data-code="${code}">Just watch</button></div>`, { title: "You're invited" }));
   }
   const pre = (S.user.name || '').trim();
   if (pre) return doJoin(code, pre);
@@ -761,7 +762,7 @@ function rulesTab(sweep, isHost, st) {
   return `${editing ? rulesEditor(rules, awards, 'e') : `<div class="card">${Object.values(rules).map((r) => `<div class="award"><span class="${r.on ? '' : 'muted'}">${esc(r.label)}</span><span class="w ${r.on ? (r.points >= 0 ? 'p-pos' : 'p-neg') : 'muted'}">${r.on ? fmtPts(r.points) : 'off'}</span></div>`).join('')}</div>
     <div class="card" style="margin-top:10px">${Object.values(awards).map((a) => `<div class="award"><span class="${a.on ? '' : 'muted'}">${esc(a.label)}</span><span class="w muted">${a.on ? 'on' : 'off'}</span></div>`).join('')}</div>`}
     ${isHost ? `<div class="stack" style="margin-top:14px">
-      ${!editing && sweep.status === 'drawn' && V.data.members.some((m) => m.kind === 'local') ? `<div class="card stack"><div><b>Invite someone to claim their players</b><div class="small muted">For anyone you dealt in on this phone. They open the link, tap their name and follow their own players.</div></div><div class="row"><button class="grow" data-act="share">Share invite link</button><button class="soft" data-act="copy" data-t="${esc(inviteLink(sweep.code))}">Copy</button></div></div>` : ''}
+      ${!editing && sweep.status === 'drawn' ? `<div class="card stack"><div><b>Invite link</b><div class="small muted">Anyone with it can watch and can't change anything.${V.data.members.some((m) => m.kind === 'local') ? ' Anyone you dealt in on this phone can tap their name to follow their own players.' : ''}</div></div><div class="row"><button class="grow" data-act="share">Share invite link</button><button class="soft" data-act="copy" data-t="${esc(inviteLink(sweep.code))}">Copy</button></div></div>` : ''}
       ${editing ? `<button class="block" data-act="saverules">Save scoring</button><button class="ghost block" data-act="cancelrules">Cancel</button>` : `<button class="soft block" data-act="editrules">Edit scoring</button>`}
       ${!locked && !editing ? `<button class="danger block" data-act="reopen">Reopen the draw (redraw players)</button>` : ''}
       ${!editing ? `<button class="danger block" data-act="delsweep" data-id="${V.id}" style="margin-top:8px">Delete this sweepstake</button>` : ''}</div>` : '<p class="small muted center" style="margin-top:12px">Only the host can change the scoring.</p>'}`;
@@ -794,6 +795,7 @@ document.addEventListener('click', async (ev) => {
     case 'open': return go('#/s/' + d.id);
     case 'joincode': { const c = document.getElementById('joincode').value.trim().toUpperCase(); if (c) go('#/join/' + c); return; }
     case 'claim': try { const id = await S.api.claim(d.code, d.id); return go('#/s/' + id); } catch (e) { return toast(e.message); }
+    case 'watch': return doJoin(d.code, (S.user.name || '').trim() || 'Viewer');
     case 'dojoin': { const n = document.getElementById('jname').value.trim(); if (!n) return toast('Add your name'); S.user = await S.api.auth.setName(n).catch(() => S.user); return doJoin(d.code, n); }
     // new
     case 'date': N.date = d.d; N.sel = null; return loadFixtures();
