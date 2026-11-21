@@ -853,8 +853,7 @@ function closeModal() { document.querySelector('.modal-back')?.remove(); }
   applyLook(); matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', applyLook);
   S.api = await createApi(window.STATTO_CONFIG || {});
   S.user = await S.api.auth.getUser();
-  S.api.auth.onChange((u) => { const had = !!S.user; S.user = u; if (!!u !== had) route(); if (u && !had) ensureSquads(); });
+  S.api.auth.onChange((u) => { const had = !!S.user; S.user = u; if (!!u !== had) route(); });
   window.addEventListener('hashchange', route);
   route();
-  if (S.user) setTimeout(ensureSquads, 1500);
 })();

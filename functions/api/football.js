@@ -85,7 +85,7 @@ export async function onRequestPost({ request, env }) {
       const r = await fetch(API + path, { headers: { 'x-apisports-key': env.API_FOOTBALL_KEY } });
       const j = await r.json();
       const errs = j.errors && (Array.isArray(j.errors) ? j.errors : Object.values(j.errors));
-      if (errs && errs.length) throw new Error(String(errs[0]));
+      if (errs && errs.length) { const m = String(errs[0]); throw new Error(/too many requests|per minute|rate ?limit/i.test(m) ? 'API-Football per-minute limit reached - wait a minute and try again.' : m); }
       const response = unescapeDeep(j.response);
       return raw ? { response, paging: j.paging } : response;
     }
