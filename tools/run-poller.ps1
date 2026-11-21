@@ -11,12 +11,13 @@ function Read-Secret($prompt, $check, $hint) {
     $s = Read-Host $prompt -AsSecureString
     $v = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))
     $v = ($v -replace '[^\x21-\x7E]', '')   # drop stray control characters and spaces
+    if ($v.Length -ge 40 -and $v.Length % 2 -eq 0 -and $v.Substring(0, $v.Length / 2) -eq $v.Substring($v.Length / 2)) { $v = $v.Substring(0, $v.Length / 2) }   # pasted twice by accident
     if (& $check $v) { return $v }
     Write-Host "That didn't look right ($($v.Length) characters). $hint" -ForegroundColor Yellow
   }
 }
 $paste = 'In this window, paste with a RIGHT-CLICK (Ctrl+V does not work here). Nothing shows as you paste, that is normal.'
-$env:API_FOOTBALL_KEY = Read-Secret 'Paste your API-Football Pro key, then press Enter' { param($v) $v.Length -ge 20 } $paste
+$env:API_FOOTBALL_KEY = Read-Secret 'Paste your API-Football Pro key, then press Enter' { param($v) $v -match '^[A-Za-z0-9]{24,40}$' } $paste
 $env:DATABASE_URL = Read-Secret 'Paste the stattosweepstake (game) database connection string, then press Enter' { param($v) $v -match '^postgres(ql)?://' } $paste
 node tools/poller.mjs
 Read-Host 'Poller stopped. Press Enter to close'
