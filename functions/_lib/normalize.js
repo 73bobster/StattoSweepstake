@@ -59,3 +59,12 @@ export function stamp(prev, next, now = new Date().toISOString()) {
   if (next.lineups) next.lineupsAt = prev?.lineupsAt || now;
   return next;
 }
+
+/** One row for public.live_board (the all-live-games board read by MyTeamCompanion). Line-ups are left out to keep rows small. */
+export const LIVE_LEAGUES = new Set([39, 40, 41, 42, 45, 48, 179, 180, 181, 183, 184, 2, 3, 848]);
+export const IN_PLAY = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'INT', 'LIVE'];
+export function normLive(f) {
+  const st = normState(f);
+  delete st.lineups;
+  return { fixture_id: st.id, league_id: st.league.id, kickoff: st.kickoff, state: st };
+}

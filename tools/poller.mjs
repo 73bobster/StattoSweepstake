@@ -9,7 +9,7 @@
 //   node tools/poller.mjs
 // Or double-click tools/run-poller.bat. Leave the window open; Ctrl+C stops it.
 import { makeSql } from '../functions/_lib/neon.js';
-import { normState, normFixtureRow, finished, unescapeDeep, stamp } from '../functions/_lib/normalize.js';
+import { normState, normFixtureRow, finished, unescapeDeep, stamp, normLive, LIVE_LEAGUES, IN_PLAY } from '../functions/_lib/normalize.js';
 
 const key = process.env.API_FOOTBALL_KEY, dbUrl = process.env.DATABASE_URL;
 if (!key || !dbUrl) { console.error('Set API_FOOTBALL_KEY and DATABASE_URL first (see the top of this file).'); process.exit(1); }
@@ -52,7 +52,25 @@ async function refreshLists() {
   }
 }
 
+
+// The live board for MyTeamCompanion: ONE call ("live=all") returns every game in play worldwide with score, minute and events; we keep the UK and
+// European competitions. A game that has just finished drops out of "live=all", so those are fetched by id once to store the final score.
+async function refreshLive() {
+  const live = (await api('/fixtures?live=all')).filter((f) => LIVE_LEAGUES.has(f.league?.id));
+  const seen = new Set(live.map((f) => f.fixture.id));
+  const ended = (await sql(`select fixture_id::text as id from live_board where state->'status'->>'short' in ${"('" + IN_PLAY.join("','") + "')"} and updated_at > now() - interval '5 hours'`))
+    .map((r) => Number(r.id)).filter((id) => !seen.has(id)).slice(0, 20);
+  const done = ended.length ? (await api(`/fixtures?ids=${ended.join('-')}`)).filter((f) => LIVE_LEAGUES.has(f.league?.id)) : [];
+  for (const f of [...live, ...done]) {
+    const r = normLive(f);
+    await sql("insert into live_board(fixture_id, league_id, kickoff, state, updated_at) values ($1, $2, $3, $4::jsonb, now()) on conflict (fixture_id) do update set state = excluded.state, updated_at = now()", [r.fixture_id, r.league_id, r.kickoff, JSON.stringify(r.state)]);
+  }
+  await sql("delete from live_board where kickoff < now() - interval '1 day'");
+  if (live.length || done.length) log(`  live board: ${live.length} in play, ${done.length} just finished.`);
+}
+
 async function cycle() {
+  try { await refreshLive(); } catch (e) { log(`  live board: ${e.message}`); }
   try { await refreshLists(); } catch (e) { log(`  match list: ${e.message}`); }
   const ids = await activeFixtures();
   if (!ids.length) { await beat(); return log('No active matches - idle (no API calls).'); }
