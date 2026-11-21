@@ -261,7 +261,8 @@ export async function onRequestPost({ request, env }) {
       if (body.step === 'numbers') return json(await fd.stepNumbers(ctx, String(body.team)));
       return json({ error: 'Unknown step' }, 400);
     }
-    if (action === 'apiStatus') { // plan and quota of the key in use (never returns the key); /status is not metered by API-Football
+    if (action === 'apiStatus') {
+      if (!isAdmin) return json({ error: 'Admin only' }, 403); // plan and quota of the key in use (never returns the key); /status is not metered by API-Football
       const r = await fetch(API + '/status', { headers: { 'x-apisports-key': env.API_FOOTBALL_KEY } });
       const j = await r.json();
       const x = j.response || {};
