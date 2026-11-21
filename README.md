@@ -36,3 +36,10 @@ the host can reopen and redraw then.
 ## Layout
 `public/js/draw.js` balanced random draw - `public/js/scoring.js` points and prizes - `public/js/api.js` Neon and demo
 backends - `public/js/app.js` screens - `db/schema.sql` tables, RLS and RPC functions - `functions/` server code.
+
+
+## Live matches: home poller (optional, recommended)
+API-Football throttles shared cloud IPs, which includes Cloudflare. `tools/poller.mjs` runs on a home computer, refreshes live matches
+once a minute in a single API call, and saves them to Neon (`api_cache` `state:<id>`, `fixture_state`) with a `poller:heartbeat`.
+The site reads that cache. If the poller stops (heartbeat older than 150 s) the Pages Function calls API-Football itself as before.
+Start it with `tools/run-poller.bat` (Windows). One-off data loads use `tools/run-loader.bat`.

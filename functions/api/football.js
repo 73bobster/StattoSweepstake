@@ -9,65 +9,17 @@
 import { verifyJwt } from '../_lib/jwt.js';
 import { makeSql } from '../_lib/neon.js';
 import * as fd from '../_lib/footballdata.js';
+import { ROLE, finished, normFixtureRow, normLineups, normState, unescapeDeep } from '../_lib/normalize.js';
 
 const API = 'https://v3.football.api-sports.io';
 const DAILY_BUDGET = 95; // stop before the 100/day free limit
 const SEED_BUDGET = 70; // squad seeding never uses the last ~25 calls of the day - those are for fixtures and live matches
 // Leagues whose squads we keep in our own database: Premier League, Championship, Scottish Premiership, Scottish Championship
-// API-Football sometimes returns HTML-escaped text (O&apos;Donnell); store and show it as plain text.
-const ENT = { '&apos;': "'", '&#39;': "'", '&#x27;': "'", '&quot;': '"', '&amp;': '&' };
-const unescapeDeep = (v) => typeof v === 'string' ? v.replace(/&(apos|#39|#x27|quot|amp);/g, (m) => ENT[m]) : Array.isArray(v) ? v.map(unescapeDeep) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unescapeDeep(x)])) : v;
-
 const LEAGUES = { 39: { name: 'Premier League', teams: 20 }, 40: { name: 'Championship', teams: 24 }, 179: { name: 'Scottish Premiership', teams: 12 }, 180: { name: 'Scottish Championship', teams: 10 } };
 const SQUAD_MAX_AGE_DAYS = 30;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
-
-const ROLE = { Goalkeeper: 'GK', Defender: 'DEF', Midfielder: 'MID', Attacker: 'ATT', G: 'GK', D: 'DEF', M: 'MID', F: 'ATT' };
-const finished = (s) => ['FT', 'AET', 'PEN'].includes(s);
-
-const normFixtureRow = (f) => ({
-  id: f.fixture.id,
-  kickoff: f.fixture.date,
-  status: { short: f.fixture.status.short, long: f.fixture.status.long, elapsed: f.fixture.status.elapsed },
-  league: { id: f.league.id, name: f.league.name, country: f.league.country, logo: f.league.logo, round: f.league.round },
-  teams: {
-    home: { id: f.teams.home.id, name: f.teams.home.name, logo: f.teams.home.logo },
-    away: { id: f.teams.away.id, name: f.teams.away.name, logo: f.teams.away.logo },
-  },
-  goals: f.goals,
-});
-
-function normLineups(lineups, homeId) {
-  if (!lineups?.length) return null;
-  const out = {};
-  for (const l of lineups) {
-    const side = l.team.id === homeId ? 'home' : 'away';
-    out[side] = {
-      formation: l.formation,
-      coach: l.coach?.name,
-      startXI: l.startXI.map((p) => p.player.id),
-      subs: l.substitutes.map((p) => p.player.id),
-      players: [
-        ...l.startXI.map((p) => ({ ...p.player, bench: false })),
-        ...l.substitutes.map((p) => ({ ...p.player, bench: true })),
-      ].map((p) => ({ id: p.id, name: p.name, number: p.number, role: ROLE[p.pos] || 'MID', bench: p.bench })),
-    };
-  }
-  return out.home && out.away ? out : null;
-}
-
-function normState(f) {
-  return {
-    ...normFixtureRow(f),
-    events: (f.events || []).map((e) => ({
-      x: e.time.elapsed, e: e.time.extra, team: e.team.id, pid: e.player?.id ?? null, pname: e.player?.name ?? null,
-      aid: e.assist?.id ?? null, aname: e.assist?.name ?? null, type: e.type, detail: e.detail,
-    })),
-    lineups: normLineups(f.lineups, f.teams.home.id),
-  };
-}
 
 export async function onRequestPost({ request, env }) {
   try {
@@ -236,14 +188,18 @@ export async function onRequestPost({ request, env }) {
       if (st && finished(st)) ttl = 7 * 24 * 3600;
       else if (st === 'NS' && kickoff && kickoff - Date.now() > 2 * 3600e3) ttl = 30 * 60;
       else if (st === 'NS' && kickoff && kickoff - Date.now() > 0) ttl = 5 * 60;
-      const force = !!body.force && !(st && finished(st)) && (!ex || Number(ex.age) > 45);
+      // The home poller (tools/poller.mjs) refreshes live games every minute and writes a heartbeat. While it is alive nobody needs to
+      // force a direct API call; once it stops (age > 150s) the normal cache rules below take over and this function calls the API itself.
+      const hb = (await sql("select extract(epoch from (now() - fetched_at))::text as age from api_cache where key = 'poller:heartbeat'"))[0];
+      const pollerAlive = !!hb && Number(hb.age) < 150;
+      const force = !!body.force && !pollerAlive && !(st && finished(st)) && (!ex || Number(ex.age) > 45);
       const r = await cached(`state:${id}`, ttl, async () => {
         const resp = await call(`/fixtures?id=${id}`);
         if (!resp?.length) throw new Error('Fixture not found');
         return normState(resp[0]);
       }, force);
       if (r.fresh) await sql('insert into fixture_state(fixture_id, state, updated_at) values ($1, $2::jsonb, now()) on conflict (fixture_id) do update set state = excluded.state, updated_at = now()', [id, JSON.stringify(r.data)]);
-      return json({ state: r.data, fetchedAt: r.fetchedAt });
+      return json({ state: r.data, fetchedAt: r.fetchedAt, via: pollerAlive && !r.fresh ? 'poller' : 'direct' });
     }
 
     if (action === 'whoami') return json({ admin: isAdmin });
