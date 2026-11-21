@@ -60,7 +60,22 @@ export async function onRequestPost({ request, env }) {
     const normSquad = (resp) => (resp?.[0]?.players || []).map((p) => ({ id: p.id, name: p.name, number: p.number ?? null, photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`, role: ROLE[p.position] || 'MID' }));
 
     /** A team's squad from our own database; only if we've never stored it do we ask the API (and then keep it). */
+    /** A team's current squad from the shared football-data database (no API call). Null if it isn't loaded there. */
+    async function squadFromFootballDb(teamId) {
+      if (!env.FOOTBALL_DATABASE_URL) return null;
+      try {
+        const rows = await makeSql(env.FOOTBALL_DATABASE_URL)(`select pe.external_id as pid, coalesce(p.known_as, p.full_name) as name, se.shirt_number::text as number, se.position, p.photo_url
+          from ref.external_ids ce join ref.squad_entries se on se.club_id = ce.entity_id and se.season = (select max(season) from ref.squad_entries where club_id = ce.entity_id)
+          join ref.players p on p.id = se.player_id join ref.external_ids pe on pe.entity = 'player' and pe.entity_id = p.id and pe.provider = 'api-football'
+          where ce.entity = 'club' and ce.provider = 'api-football' and ce.external_id = $1`, [String(teamId)]);
+        if (rows.length < 11) return null;
+        return rows.map((r) => ({ id: Number(r.pid), name: r.name, number: r.number == null ? null : Number(r.number), photo: r.photo_url || `https://media.api-sports.io/football/players/${r.pid}.png`, role: ['GK', 'DEF', 'MID', 'ATT'].includes(r.position) ? r.position : 'MID' }));
+      } catch { return null; } // fall back to the old squads table / API
+    }
+
     async function squadFor(teamId) {
+      const shared = await squadFromFootballDb(teamId);
+      if (shared) return shared;
       const row = (await sql('select players::text as players from squads where team_id = $1 and players is not null', [teamId]))[0];
       if (row) return JSON.parse(row.players);
       const players = normSquad(await call(`/players/squads?team=${teamId}`));
@@ -149,8 +164,14 @@ export async function onRequestPost({ request, env }) {
       const id = Number(body.fixtureId), home = Number(body.homeId), away = Number(body.awayId);
       if (!id || !home || !away) return json({ error: 'Missing ids' }, 400);
       // body.squadOnly: deal from the full squads even if line-ups are out (saves an API call too)
-      const lu = body.squadOnly ? { data: null, fetchedAt: null } : await cached(`lineups:${id}`, 10 * 60, () => call(`/fixtures/lineups?fixture=${id}`), !!body.force);
-      const lineups = body.squadOnly ? null : normLineups(lu.data, home);
+      let lu = { data: null, fetchedAt: null }, lineups = null;
+      if (!body.squadOnly) {
+        // Line-ups already saved with the match state (by the home poller or an earlier visit) cost no API call.
+        const sRow = (await sql('select state::text as state, updated_at::text as at from fixture_state where fixture_id = $1', [id]))[0];
+        const fromState = sRow ? JSON.parse(sRow.state).lineups : null;
+        if (fromState?.home && fromState?.away) { lineups = fromState; lu = { data: null, fetchedAt: sRow.at }; }
+        else { lu = await cached(`lineups:${id}`, 10 * 60, () => call(`/fixtures/lineups?fixture=${id}`), !!body.force); lineups = normLineups(lu.data, home); }
+      }
       let players, source;
       if (lineups) {
         source = 'lineups';
