@@ -60,7 +60,20 @@ if (withMatches && seasons.length) {
     for (const f of fx) {
       const r = arr(await safe(`  match ${f.fixture.id} ${f.teams.home.name} v ${f.teams.away.name}`, `/fixtures/players?fixture=${f.fixture.id}`));
       const me = r.flatMap((t) => (t.players || []).map((p) => ({ ...p, team: t.team }))).find((p) => p.player?.id === id);
-      const tf = teamFixtures.find((t) => t.id === f.fixture.id); if (tf) tf.played = !!me && (me.statistics?.[0]?.games?.minutes ?? 0) > 0 ? `yes (${me.statistics[0].games.minutes} min)` : me ? 'in squad, no minutes' : 'not in match data';
+      const tf = teamFixtures.find((t) => t.id === f.fixture.id);
+      if (tf) {
+        tf.playersReturned = r.reduce((n, t) => n + (t.players || []).length, 0);
+        tf.played = !!me && (me.statistics?.[0]?.games?.minutes ?? 0) > 0 ? `yes (${me.statistics[0].games.minutes} min)` : me ? 'in squad, no minutes' : '';
+        if (!me && !/friendl/i.test(f.league?.name || '')) {
+          // no player stats for this match: line-ups and events are separate data and often exist even then
+          const lu = arr(await safe(`  line-ups ${f.fixture.id}`, `/fixtures/lineups?fixture=${f.fixture.id}`));
+          const ev = arr(await safe(`  events ${f.fixture.id}`, `/fixtures/events?fixture=${f.fixture.id}`));
+          const inXI = lu.some((t) => (t.startXI || []).some((x) => x.player?.id === id)), onBench = lu.some((t) => (t.substitutes || []).some((x) => x.player?.id === id));
+          const evMine = ev.filter((e) => e.player?.id === id || e.assist?.id === id).map((e) => `${e.time?.elapsed}' ${e.type} ${e.detail}${e.assist?.id === id ? ' (assist/on)' : ''}`);
+          tf.lineupsPublished = lu.length > 0; tf.events = evMine;
+          tf.played = inXI ? `starting XI (no player stats)${evMine.length ? ': ' + evMine.join(', ') : ''}` : onBench ? `bench (no player stats)${evMine.length ? ': ' + evMine.join(', ') : ''}` : lu.length ? 'NOT in the match squad' : `no line-up data; players returned: ${tf.playersReturned}${evMine.length ? '; events: ' + evMine.join(', ') : ''}`;
+        } else if (!me) tf.played = `not in match data (players returned: ${tf.playersReturned})`;
+      }
       if (me) matches.push({ fixture: f.fixture.id, date: f.fixture.date, league: f.league?.name, home: f.teams.home.name, away: f.teams.away.name, goals: f.goals, stats: me.statistics?.[0] });
     }
   }
