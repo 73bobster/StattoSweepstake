@@ -47,16 +47,20 @@ const stats = {};
 for (const s of seasons.sort((a, b) => a - b)) stats[s] = await safe(`stats ${s}`, `/players?id=${id}&season=${s}`);
 
 // optional: his stats in every match of the latest season (fixtures for his club, then one call per finished match)
-const matches = [];
+const matches = [], teamFixtures = [];
 if (withMatches && seasons.length) {
   const latest = Math.max(...seasons);
   const blocks = arr(stats[latest]).flatMap((r) => r.statistics || []);
   const clubs = [...new Map(blocks.map((b) => [b.team?.id, b.team])).values()].filter(Boolean);
   for (const club of clubs) {
-    const fx = arr(await safe(`${club.name} fixtures ${latest}`, `/fixtures?team=${club.id}&season=${latest}`)).filter((f) => ['FT', 'AET', 'PEN'].includes(f.fixture.status.short));
+    const allFx = await safe(`${club.name} fixtures ${latest}`, `/fixtures?team=${club.id}&season=${latest}`);
+    const fx = arr(allFx).filter((f) => ['FT', 'AET', 'PEN'].includes(f.fixture.status.short));
+    // every finished fixture the club played this season in ANY competition (cups included), and whether he appears in the match data
+    for (const f of arr(allFx)) teamFixtures.push({ id: f.fixture.id, date: f.fixture.date, league: `${f.league?.name} (${f.league?.country})`, leagueId: f.league?.id, round: f.league?.round, status: f.fixture.status.short, home: f.teams.home.name, away: f.teams.away.name, goals: f.goals, played: null });
     for (const f of fx) {
       const r = arr(await safe(`  match ${f.fixture.id} ${f.teams.home.name} v ${f.teams.away.name}`, `/fixtures/players?fixture=${f.fixture.id}`));
       const me = r.flatMap((t) => (t.players || []).map((p) => ({ ...p, team: t.team }))).find((p) => p.player?.id === id);
+      const tf = teamFixtures.find((t) => t.id === f.fixture.id); if (tf) tf.played = !!me && (me.statistics?.[0]?.games?.minutes ?? 0) > 0 ? `yes (${me.statistics[0].games.minutes} min)` : me ? 'in squad, no minutes' : 'not in match data';
       if (me) matches.push({ fixture: f.fixture.id, date: f.fixture.date, league: f.league?.name, home: f.teams.home.name, away: f.teams.away.name, goals: f.goals, stats: me.statistics?.[0] });
     }
   }
@@ -66,7 +70,7 @@ const p = arr(profile)[0]?.player || arr(stats[Math.max(...seasons)])[0]?.player
 const name = (p.name || `player-${id}`).replace(/[^\w]+/g, '-');
 const dir = `player-report/${id}-${name}`;
 await mkdir(dir, { recursive: true });
-await writeFile(`${dir}/player.json`, JSON.stringify({ id, fetchedAt: new Date().toISOString(), profile, seasons, teams, transfers, trophies, sidelined, stats, matches }, null, 2));
+await writeFile(`${dir}/player.json`, JSON.stringify({ id, fetchedAt: new Date().toISOString(), profile, seasons, teams, transfers, trophies, sidelined, stats, matches, teamFixtures }, null, 2));
 
 // ---- readable report
 const v = (x) => (x === null || x === undefined ? '' : x);
@@ -89,6 +93,12 @@ for (const s of arr(sidelined)) L.push(`- ${v(s.type)}: ${v(s.start)} to ${v(s.e
 if (matches.length) {
   L.push('', '## Match by match (latest season)', '', '| Date | Match | Score | Mins | Rating | Goals | Assists | Shots (on) | Pass | Tackles | Cards |', '|---|---|---|---|---|---|---|---|---|---|---|');
   for (const m of matches) { const s = m.stats || {}; L.push(`| ${String(m.date).slice(0, 10)} | ${m.home} v ${m.away} | ${m.goals?.home}-${m.goals?.away} | ${v(s.games?.minutes)} | ${v(s.games?.rating)} | ${v(s.goals?.total)} | ${v(s.goals?.assists)} | ${v(s.shots?.total)} (${v(s.shots?.on)}) | ${v(s.passes?.total)} | ${v(s.tackles?.total)} | ${v(s.cards?.yellow)}Y ${v(s.cards?.red)}R |`); }
+}
+if (teamFixtures.length) {
+  L.push('', '## Every fixture his club played this season (all competitions)', '', '| Date | Competition | Round | Match | Score | Status | Did he play? |', '|---|---|---|---|---|---|---|');
+  for (const t of teamFixtures.sort((a, b) => String(a.date).localeCompare(String(b.date)))) L.push(`| ${String(t.date).slice(0, 10)} | ${v(t.league)} | ${v(t.round)} | ${t.home} v ${t.away} | ${t.goals?.home ?? ''}-${t.goals?.away ?? ''} | ${t.status} | ${v(t.played)} |`);
+  const byComp = {}; for (const t of teamFixtures) byComp[t.league] = (byComp[t.league] || 0) + 1;
+  L.push('', 'Games per competition: ' + Object.entries(byComp).map(([k, n]) => `${k} ${n}`).join(' · '));
 }
 await writeFile(`${dir}/report.md`, L.join('\n'));
 log(`\nDone. ${calls} calls. Saved to ${dir}/ (report.md is the readable one, player.json has everything raw).`);
