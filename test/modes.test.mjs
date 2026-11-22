@@ -65,3 +65,22 @@ assert.deepEqual(pts, { A: 1, B: 0 });
 const pre = computeScores({ rules, awards: DEFAULT_AWARDS, members, picks, state: { ...state, status: { short: 'NS' }, events: [] } });
 assert.equal(pre.rows.reduce((t, r) => t + r.points, 0), 0);
 console.log('modes tests passed');
+
+// confirmed line-ups: every starter is always dealt, hands are equal in size, only bench players are ever left out
+{
+  const roles = (r) => Object.entries(r).flatMap(([role, n]) => Array.from({ length: n }, () => role));
+  let id = 0;
+  const side = (s, bench, spec) => roles(spec).map((role) => ({ id: ++id, name: 'X' + id, side: s, role, bench }));
+  const lineup = { players: [...side('home', false, { GK: 1, DEF: 4, MID: 4, ATT: 2 }), ...side('away', false, { GK: 1, DEF: 4, MID: 4, ATT: 2 }), ...side('home', true, { GK: 1, DEF: 3, MID: 3, ATT: 2 }), ...side('away', true, { GK: 1, DEF: 3, MID: 3, ATT: 2 })] };
+  for (let n = 2; n <= 8; n++) {
+    const ids = Array.from({ length: n }, (_, i) => 'm' + i);
+    const { picks } = dealAll({ pool: lineup, memberIds: ids, rng });
+    assert.equal(picks.filter((p) => p.slot === 'starter').length, 22, `all starters dealt for ${n}`);
+    const sizes = ids.map((m) => picks.filter((p) => p.memberId === m).length);
+    assert.equal(Math.max(...sizes), Math.min(...sizes), `equal hands for ${n}: ${sizes}`);
+    const st = ids.map((m) => picks.filter((p) => p.memberId === m && p.slot === 'starter').length);
+    assert.ok(Math.max(...st) - Math.min(...st) <= 1, `starters within one for ${n}: ${st}`);
+    for (const role of ['DEF', 'MID']) { const c = ids.map((m) => picks.filter((p) => p.memberId === m && p.slot === 'starter' && p.role === role).length); assert.ok(Math.max(...c) - Math.min(...c) <= 1, `${role} within one for ${n}: ${c}`); }
+  }
+}
+console.log('lineup deal ok');

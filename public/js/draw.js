@@ -141,38 +141,47 @@ export function runDraw({ pool, memberIds, config, rng = Math.random, attempts =
 // Leftovers (fewer than one per person) are left out at random so nobody gets an extra player.
 // Players are dealt group by group (role x side) round-robin, so each person's role and side mix stays even.
 export function dealAll({ pool, memberIds, rng = Math.random, includeGK = true }) {
-  const k = memberIds.length;
-  if (!k) throw new Error('Nobody to deal to.');
+  const N = memberIds.length;
+  if (!N) throw new Error('Nobody to deal to.');
   const all = pool.players.filter((p) => includeGK || p.role !== 'GK');
-  if (all.length < k) throw new Error('Not enough players for that many people.');
-  // Starters and substitutes are dealt separately so everybody gets the same number of each; the odd leftovers are dropped at random.
-  const evenOut = (list) => shuffle(list, rng).slice(0, Math.floor(list.length / k) * k);
-  const starters = evenOut(all.filter((p) => p.bench !== true));
-  const subs = evenOut(all.filter((p) => p.bench === true));
-  const stat = new Map(memberIds.map((m) => [m, { total: 0, role: {}, side: {} }]));
+  if (all.length < N) throw new Error('Not enough players for that many people.');
+  // Without a starters/bench split (plain squads) there is nothing special to protect: equal hands, the odd few left out at random.
+  const split = all.some((p) => p.bench === true);
+  const starters = split ? all.filter((p) => p.bench !== true) : shuffle(all, rng).slice(0, Math.floor(all.length / N) * N);
+  const benchAll = shuffle(all.filter((p) => p.bench === true), rng);
+  const S = starters.length;
+  // Every starter is always dealt. Everyone ends with the same number of players: the bench tops hands up, and only bench players are ever left out.
+  let T = Math.max(Math.ceil(S / N), Math.floor(all.length / N));
+  const benchUsed = Math.min(benchAll.length, Math.max(0, N * T - S));
+  T = Math.max(Math.ceil(S / N), Math.floor((S + benchUsed) / N));
+  const bench = benchAll.slice(0, Math.max(0, Math.min(benchUsed, N * T - S)));
+  const base = Math.floor(S / N), extras = S % N;
+
+  const stat = new Map(memberIds.map((m) => [m, { starter: 0, bench: 0, role: {}, side: {} }]));
   const picks = [];
-  // Hand each player to whoever has the fewest of that position, then the fewest from that side, then the fewest overall.
-  const give = (p, slot) => {
-    const cap = (slot === 'starter' ? starters : subs).length / k;
-    const own = (m) => picks.filter((x) => x.memberId === m && x.slot === slot).length;
-    const open = memberIds.filter((m) => own(m) < cap);
-    const key = (m) => { const t = stat.get(m); return [t.role[`${slot}-${p.role}`] || 0, t.side[`${slot}-${p.side}`] || 0, t.total]; };
-    let best = [], bk = null;
-    for (const m of shuffle(open, rng)) {
-      const kk = key(m);
-      if (!bk || kk[0] < bk[0] || (kk[0] === bk[0] && (kk[1] < bk[1] || (kk[1] === bk[1] && kk[2] < bk[2])))) { bk = kk; best = [m]; }
-      else if (kk[0] === bk[0] && kk[1] === bk[1] && kk[2] === bk[2]) best.push(m);
+  let extrasUsed = 0;
+  // Hand each player to whoever has the fewest of that position, then the fewest from that side, then the fewest overall (ties at random).
+  const give = (p, slot, eligible) => {
+    const open = shuffle(memberIds.filter((m) => eligible(stat.get(m))), rng);
+    let best = null, bk = null;
+    for (const m of open) {
+      const t = stat.get(m); const kk = [t.role[`${slot}${p.role}`] || 0, t.side[`${slot}${p.side}`] || 0, t.starter + t.bench];
+      if (!bk || kk[0] < bk[0] || (kk[0] === bk[0] && (kk[1] < bk[1] || (kk[1] === bk[1] && kk[2] < bk[2])))) { bk = kk; best = m; }
     }
-    const m = best[0];
-    const t = stat.get(m);
-    t.total++; t.role[`${slot}-${p.role}`] = (t.role[`${slot}-${p.role}`] || 0) + 1; t.side[`${slot}-${p.side}`] = (t.side[`${slot}-${p.side}`] || 0) + 1;
-    picks.push({ memberId: m, playerId: p.id, slot, role: p.role, side: p.side });
+    const t = stat.get(best);
+    t[slot]++; t.role[`${slot}${p.role}`] = (t.role[`${slot}${p.role}`] || 0) + 1; t.side[`${slot}${p.side}`] = (t.side[`${slot}${p.side}`] || 0) + 1;
+    picks.push({ memberId: best, playerId: p.id, slot, role: p.role, side: p.side });
+    return t;
   };
-  // scarce positions first (goalkeepers, then attackers...) so the small groups are shared out fairly
-  const byRole = (list) => { const c = {}; list.forEach((p) => (c[p.role] = (c[p.role] || 0) + 1)); return [...list].sort((x, y) => c[x.role] - c[y.role]); };
-  byRole(starters).forEach((p) => give(p, 'starter'));
-  byRole(subs).forEach((p) => give(p, 'sub'));
-  return { picks, summary: { each: (starters.length + subs.length) / k, leftOut: all.length - starters.length - subs.length } };
+  // the scarce positions go first (goalkeepers, then attackers...) so the small groups are shared out fairly
+  const byRole = (list) => { const c = {}; list.forEach((p) => (c[p.role] = (c[p.role] || 0) + 1)); return shuffle(list, rng).sort((x, y) => c[x.role] - c[y.role]); };
+  for (const p of byRole(starters)) {
+    give(p, 'starter', (t) => t.starter < base || (t.starter === base && extrasUsed < extras));
+    const last = picks[picks.length - 1]; if (stat.get(last.memberId).starter === base + 1) extrasUsed++;
+  }
+  for (const p of byRole(bench)) give(p, 'bench', (t) => t.starter + t.bench < T);
+  for (const x of picks) if (x.slot === 'bench') x.slot = 'sub';
+  return { picks, summary: { each: T, startersDropped: 0, benchLeftOut: benchAll.length - bench.length, leftOut: all.length - T * N } };
 }
 
 // ---------------------------------------------------------------------------
