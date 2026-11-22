@@ -424,7 +424,10 @@ async function viewSweep(id) {
 }
 async function refreshSweep() { V.data = await S.api.load(V.id); }
 async function pollState(force) {
-  try { applyState(await S.api.getState(V.data.sweep.fixtureId, force)); } catch (e) { V.stateErr = e.message; if (force) toast(e.message); }
+  // Nothing happens in a match until the teams are announced: more than 2 hours before kick-off don't ask the API at all (saves calls and avoids pointless errors)
+  const mins = (Date.parse(V.data.sweep.fixture?.kickoff) - Date.now()) / 60000;
+  if (!force && mins > 120 && V.data.sweep.status !== 'setup') { V.stateErr = ''; return; }
+  try { applyState(await S.api.getState(V.data.sweep.fixtureId, force)); } catch (e) { V.stateErr = V.state ? '' : e.message; if (force) toast(e.message); }
 }
 function applyState(st) {
   const prevCount = V.seen ?? 0;
