@@ -87,14 +87,16 @@ async function createNeonApi(cfg) {
       return r ? { id: r.id, name: r.name, fixture: r.fixture, status: r.status, memberCount: Number(r.member_count) } : null;
     },
     join: async (code, name) => must(await client.rpc('join_sweepstake', { p_code: code, p_display_name: name })),
+    setArchived: async (id, on) => must(await client.rpc('set_archived', { p_sweepstake: id, p_archived: !!on })),
     claimable: async (code) => (must(await client.rpc('claimable_members', { p_code: code })) || []).map((r) => ({ id: r.id, name: r.name, pickCount: Number(r.pick_count) })),
     claim: async (code, memberId) => must(await client.rpc('claim_member', { p_code: code, p_member: memberId })),
     async listMine() {
       // RLS lets us see every member of our games, so only keep OUR membership rows - otherwise a game shows once per player in it.
       const me = (await api.auth.getUser())?.id;
-      const rows = must(await client.from('members').select('sweepstake_id, is_host, user_id, sweepstakes(id,code,name,creator_id,fixture_id,fixture,rules,awards,draw_config,status,created_at)').order('joined_at', { ascending: false }));
+      const rows = must(await client.from('members').select('sweepstake_id, is_host, user_id, display_name, archived, sweepstakes(id,code,name,creator_id,fixture_id,fixture,rules,awards,draw_config,status,created_at)').order('joined_at', { ascending: false }));
       const mine = new Map();
-      for (const r of rows) if (r.sweepstakes && r.user_id === me && !mine.has(r.sweepstake_id)) mine.set(r.sweepstake_id, { ...mapSweep(r.sweepstakes), isHost: r.is_host });
+      const hostName = new Map(rows.filter((r) => r.is_host).map((r) => [r.sweepstake_id, r.display_name]));
+      for (const r of rows) if (r.sweepstakes && r.user_id === me && !mine.has(r.sweepstake_id)) mine.set(r.sweepstake_id, { ...mapSweep(r.sweepstakes), isHost: r.is_host, hostName: hostName.get(r.sweepstake_id) || '', archived: !!r.archived });
       return [...mine.values()];
     },
     async load(id) {
@@ -271,7 +273,8 @@ function createDemoApi() {
       d.members.push({ id: uid(), sweepId: s.id, userId: u.id, name, isHost: false, kind: s.status === 'setup' ? 'user' : 'viewer' });
       write(d); return s.id;
     },
-    async listMine() { const u = sessionUser(); const d = db(); return d.members.filter((m) => m.userId === u.id).map((m) => ({ ...d.sweeps.find((s) => s.id === m.sweepId), isHost: m.isHost })).filter((s) => s.id); },
+    async listMine() { const u = sessionUser(); const d = db(); return d.members.filter((m) => m.userId === u.id).map((m) => ({ ...d.sweeps.find((s) => s.id === m.sweepId), isHost: m.isHost, archived: !!m.archived, hostName: d.members.find((x) => x.sweepId === m.sweepId && x.isHost)?.name || '' })).filter((s) => s.id); },
+    async setArchived(id, on) { const u = sessionUser(); const d = db(); const m = d.members.find((x) => x.sweepId === id && x.userId === u.id); if (m) { m.archived = !!on; write(d); } },
     async load(id) { const d = db(); const sweep = d.sweeps.find((s) => s.id === id); if (!sweep) throw new Error('Sweepstake not found'); return { sweep, members: d.members.filter((m) => m.sweepId === id && m.kind !== 'viewer'), picks: d.picks.filter((p) => p.sweepId === id) }; },
     async saveDraw(id, picks) {
       const d = db(); d.picks = d.picks.filter((p) => p.sweepId !== id).concat(picks.map((p) => ({ ...p, id: uid(), sweepId: id })));

@@ -236,19 +236,23 @@ function gameStatus(s) {
 async function viewHome() {
   $app.innerHTML = shell('<div class="spinner"></div>', { title: 'My games' });
   const mine = await S.api.listMine();
+  const active = mine.filter((s) => !s.archived), archived = mine.filter((s) => s.archived);
+  const card = (s) => `
+      <div class="card" data-act="open" data-id="${s.id}" style="cursor:pointer">
+        <div class="row between"><b>${esc(s.name)}</b><span class="row" style="gap:6px"><span class="pill">${gameStatus(s)}</span>${s.isHost ? `<button class="ghost sm" data-act="delsweep" data-id="${s.id}" title="Delete" aria-label="Delete sweepstake">🗑</button>` : ''}</span></div>
+        <div class="row muted small" style="margin-top:6px">${crest(s.fixture.teams.home)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? ' v ' : ` ${esc(s.fixture.teams.home.name)} v `}${crest(s.fixture.teams.away)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? '' : ` ${esc(s.fixture.teams.away.name)}`}</div>
+        <div class="row between small muted" style="margin-top:4px"><span>${dayStr(s.fixture.kickoff)} · ${timeStr(s.fixture.kickoff)} · ${s.isHost ? 'you are the host' : s.hostName ? 'hosted by ' + esc(s.hostName) : ''}</span><button class="ghost sm" data-act="archive" data-id="${s.id}" data-on="${s.archived ? '' : '1'}">${s.archived ? 'Put back' : 'Remove from list'}</button></div>
+      </div>`;
   $app.innerHTML = shell(`
     <div class="row"><button class="grow" data-act="new">＋ New sweepstake</button></div>
     <div class="card stack" style="margin-top:12px">
       <label class="lbl" style="margin:0">Got an invite code?</label>
       <div class="row"><input type="text" id="joincode" placeholder="ABC123" maxlength="6" style="text-transform:uppercase;letter-spacing:.2em"><button class="soft" data-act="joincode">Join</button></div>
     </div>
-    <div class="sec">${mine.length ? 'Your sweepstakes' : ''}</div>
-    <div class="stack">${mine.map((s) => `
-      <div class="card" data-act="open" data-id="${s.id}" style="cursor:pointer">
-        <div class="row between"><b>${esc(s.name)}</b><span class="row" style="gap:6px"><span class="pill">${gameStatus(s)}</span>${s.isHost ? `<button class="ghost sm" data-act="delsweep" data-id="${s.id}" title="Delete" aria-label="Delete sweepstake">🗑</button>` : ''}</span></div>
-        <div class="row muted small" style="margin-top:6px">${crest(s.fixture.teams.home)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? ' v ' : ` ${esc(s.fixture.teams.home.name)} v `}${crest(s.fixture.teams.away)}${s.name === `${s.fixture.teams.home.name} v ${s.fixture.teams.away.name}` ? '' : ` ${esc(s.fixture.teams.away.name)}`}</div>
-        <div class="small muted" style="margin-top:4px">${dayStr(s.fixture.kickoff)} · ${timeStr(s.fixture.kickoff)}${s.isHost ? ' · you are the host' : ''}</div>
-      </div>`).join('') || '<p class="muted center">Nothing yet. Start one and invite your mates.</p>'}</div>`, { title: 'My games', sub: 'Your sweepstakes' });
+    <div class="sec">${active.length || !archived.length ? 'Active sweepstakes' : ''}</div>
+    <div class="stack">${active.map(card).join('') || '<p class="muted center">Nothing yet. Start one and invite your mates.</p>'}</div>
+    ${archived.length ? `<div class="center" style="margin-top:16px"><a href="#" class="small" data-act="togglearch">${S.showArchived ? 'Hide' : 'Show'} archived sweepstakes (${archived.length})</a></div>
+    ${S.showArchived ? `<div class="sec">Archived sweepstakes</div><div class="stack">${archived.map(card).join('')}</div>` : ''}` : ''}`, { title: 'My games', sub: 'Your sweepstakes' });
 }
 
 // ------------------------------------------------------------------ join
@@ -773,6 +777,7 @@ function rulesTab(sweep, isHost, st) {
 document.addEventListener('click', async (ev) => {
   const el = ev.target.closest('[data-act]'); if (!el) return;
   const act = el.dataset.act;
+  if (el.tagName === 'A') ev.preventDefault();
   if (el.type === 'checkbox') return; // handled on change
   const d = el.dataset;
   switch (act) {
@@ -838,6 +843,8 @@ document.addEventListener('click', async (ev) => {
     case 'editrules': V.edit = { rules: clone(V.data.sweep.rules), awards: clone(V.data.sweep.awards) }; return renderSweep();
     case 'cancelrules': V.edit = null; return renderSweep();
     case 'saverules': await S.api.updateRules(V.id, V.edit.rules, V.edit.awards); V.edit = null; await refreshSweep(); toast('Scoring updated'); return renderSweep();
+    case 'archive': await S.api.setArchived(d.id, !!d.on); return viewHome();
+    case 'togglearch': S.showArchived = !S.showArchived; return viewHome();
     case 'delsweep': if (confirm('Delete this sweepstake for everyone? The players, points and invite code are removed and it can’t be undone.')) {
       try { await S.api.deleteSweep(d.id); toast('Sweepstake deleted'); if (location.hash.startsWith('#/s/')) go('#/'); else viewHome(); } catch (e) { toast(e.message); } } return;
     case 'reopen': if (confirm('Reopen the draw? Everyone’s players will be cleared and you can redraw.')) { await S.api.reopen(V.id); await refreshSweep(); renderSweep(); } return;
