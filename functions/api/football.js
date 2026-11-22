@@ -64,12 +64,15 @@ export async function onRequestPost({ request, env }) {
     async function squadFromFootballDb(teamId) {
       if (!env.FOOTBALL_DATABASE_URL) return null;
       try {
-        const rows = await makeSql(env.FOOTBALL_DATABASE_URL)(`select pe.external_id as pid, coalesce(p.known_as, p.full_name) as name, se.shirt_number::text as number, se.position, p.photo_url
+        const rows = await makeSql(env.FOOTBALL_DATABASE_URL)(`select pe.external_id as pid, coalesce(p.known_as, p.full_name) as name, se.shirt_number::text as number, se.position, p.photo_url, count(se.shirt_number) over ()::int as numbered
           from ref.external_ids ce join ref.squad_entries se on se.club_id = ce.entity_id and se.season = (select max(season) from ref.squad_entries where club_id = ce.entity_id)
           join ref.players p on p.id = se.player_id join ref.external_ids pe on pe.entity = 'player' and pe.entity_id = p.id and pe.provider = 'api-football'
           where ce.entity = 'club' and ce.provider = 'api-football' and ce.external_id = $1`, [String(teamId)]);
-        if (rows.length < 11) return null;
-        return rows.map((r) => ({ id: Number(r.pid), name: r.name, number: r.number == null ? null : Number(r.number), photo: r.photo_url || `https://media.api-sports.io/football/players/${r.pid}.png`, role: ['GK', 'DEF', 'MID', 'ATT'].includes(r.position) ? r.position : 'MID' }));
+        // The season's squad rows come from everyone who appeared for the club, including players since sold or loaned out. Once the club's
+        // current squad has been loaded (shirt numbers), anyone without a number is not in it any more.
+        const current = rows.length && rows[0].numbered >= 15 ? rows.filter((r) => r.number != null) : rows;
+        if (current.length < 11) return null;
+        return current.map((r) => ({ id: Number(r.pid), name: r.name, number: r.number == null ? null : Number(r.number), photo: r.photo_url || `https://media.api-sports.io/football/players/${r.pid}.png`, role: ['GK', 'DEF', 'MID', 'ATT'].includes(r.position) ? r.position : 'MID' }));
       } catch { return null; } // fall back to the old squads table / API
     }
 
